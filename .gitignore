@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Local tooling
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Data and cache
+data/raw/
+data/cache/
+*.sqlite
+*.db
