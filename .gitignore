@@ -30,5 +30,8 @@ Thumbs.db
 # Data and cache
 data/raw/
 data/cache/
+data/processed/
+data/logs/
+reports/rysxai/
 *.sqlite
 *.db
