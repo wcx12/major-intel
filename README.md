@@ -1,60 +1,84 @@
 # Major Intel
 
-面向高考志愿与院校专业选择的可信情报系统。
+面向高考志愿、院校专业选择与数据可信问答的本地情报系统。
 
-这个项目的目标不是做一个“会聊天的专业介绍机器人”，而是构建一个可追溯、可缓存、可人工兜底的高校专业信息平台。系统需要围绕学校、专业、专业组、就业、升学、薪资、学科建设、转专业政策等问题，给学生提供来源明确、边界清楚的回答。
-
-## 第一阶段目标
-
-- 覆盖多数 211 以下的中等院校，并优先从高频咨询院校开始。
-- 对每个院校专业生成浅层解读，包括行业薪资、对口企业、教育部学科评估、学校官网专业介绍。
-- 支持按“某学校 + 某专业”查询就业情况、升学情况、薪资现状、对口企业、双一流情况和其他亮点。
-- 支持专业组相关问题，包括分流比例、冷门专业分流风险和转专业政策。
-- 就业信息需要尽量结构化，包括工作地域分布、工资分布、前 10 对口公司、考公对口岗位。
-- 构建动态 RAG：先查数据库和缓存，不命中再联网搜索；仍搜不到时不得编造，进入人工处理队列。
-
-## 建议架构
-
-```text
-学生问题
-  -> 意图识别与实体抽取
-  -> 缓存查询
-  -> 结构化数据库查询
-  -> 向量检索
-  -> 联网搜索与来源抓取
-  -> 可信度检查
-  -> RAG 回答生成
-  -> 人工兜底队列
-```
-
-## 数据层建议
-
-- `schools`: 学校基础信息、层次、地区、双一流状态、官网链接。
-- `majors`: 专业基础信息、学科门类、行业方向、职业方向。
-- `school_majors`: 学校与专业的组合信息，保存官网介绍、培养方案、亮点。
-- `employment_reports`: 就业质量报告、地域分布、行业分布、单位类型、升学比例。
-- `salary_observations`: 薪资数据来源、年份、样本口径、区间分布。
-- `company_mappings`: 专业到企业、岗位、行业的映射。
-- `civil_service_roles`: 专业可报考或高相关的考公岗位。
-- `major_group_policies`: 专业组、分流规则、冷门专业风险、转专业政策。
-- `source_documents`: 所有网页、PDF、公告、报告的来源、抓取时间和可信等级。
-- `manual_review_queue`: 搜不到、冲突、低置信度问题的人工处理队列。
-
-## 回答原则
-
-1. 所有结论必须能追溯到来源。
-2. 区分事实、推断和建议。
-3. 对年份、样本口径、地区范围保持显式说明。
-4. 搜不到不硬答，冲突时说明冲突并进入人工复核。
-5. 对薪资和就业数据避免单点结论，优先展示区间、分布和来源可信度。
-
-## 开发路线
-
-1. 先做最小可用知识库：学校、专业、官网介绍、就业报告来源。
-2. 再做动态检索链路：缓存、数据库、向量库、联网搜索、人工兜底。
-3. 然后做结构化问答 API：学校专业解读、就业升学、专业组分流、转专业政策。
-4. 最后做运营后台：来源审核、人工补录、冲突处理、缓存刷新、数据质量看板。
+这个仓库的目标不是做一个只会聊天的专业介绍机器人，而是把学校、专业、录取位次、就业市场、考公岗位、转专业政策等信息整理成可追溯、可测试、可复核的检索能力。系统回答时必须区分事实、推断和建议，并在数据不足时明确返回缺口。
 
 ## 当前状态
 
-项目刚初始化，下一步建议先写产品规格文档和数据模型，再决定技术栈。
+截至 2026-05-20，仓库已经具备以下主干能力：
+
+- 本地检索 MVP：学校、专业、学校专业组合、历年录取、分数位次转换、学校层面冲稳保匹配。
+- Function call 工具层：13 个检索入口已接入 schema、dispatcher、单元测试和 smoke runner。
+- rysxai 市场数据链路：专业市场样本 crawler、报告渲染、就业市场概览与 dashboard 构建脚本。
+- rysxai 考公数据链路：2026 公考岗位 crawler、CSV 展平与样本检索入口。
+- rysxai 转专业政策链路：学校列表 seed、转专业政策 crawler、静态 dashboard 构建脚本。
+- 数据安全边界：原始抓取、处理结果、日志、SQL dump 和本地外部资料默认不提交。
+
+更细的完成清单见 [当前状态快照](docs/status/current-state.md)。
+
+## 目录索引
+
+```text
+docs/research/                  起点调研与背景材料
+docs/specs/                     数据模型、检索工具、采集与接入方案
+docs/status/                    当前实现状态与阶段性整理
+scripts/local_retrieval_mvp.py  本地检索 CLI MVP
+scripts/retrieval_tools.py      标准检索工具层
+scripts/retrieval_function_registry.py
+                                 function schema 注册与 dispatcher
+scripts/run_retrieval_smoke_cases.py
+                                 本地 smoke case runner
+scripts/rysxai_*                rysxai 数据采集、报告和 dashboard 工具
+data/seeds/                     可提交的小型种子数据
+tests/                          单元测试
+```
+
+## 常用命令
+
+运行单元测试：
+
+```bash
+python -m unittest discover -s tests
+```
+
+运行本地检索 MVP 示例：
+
+```bash
+python scripts/local_retrieval_mvp.py \
+  --school "杭州电子科技大学" \
+  --major "机械设计制造及其自动化"
+```
+
+运行 retrieval smoke cases：
+
+```bash
+python scripts/run_retrieval_smoke_cases.py --cases data/retrieval_smoke_cases.json
+```
+
+刷新 rysxai 学校 seed：
+
+```bash
+python scripts/rysxai_transfer_policy_crawler.py --refresh-university-list --list-only
+```
+
+构建转专业政策 dashboard：
+
+```bash
+python scripts/build_rysxai_transfer_policy_dashboard.py
+```
+
+## 数据边界
+
+- `data/raw/`、`data/processed/`、`data/logs/` 是本地运行产物，默认不提交。
+- `reports/rysxai/` 和 retrieval smoke JSON 是生成结果，默认不提交。
+- `gaokao_test_*.sql` 和 `*.db` 是本地数据库产物，默认不提交。
+- `gaokao-zhiyuan-projects/` 是外部参考项目集合，默认不纳入本仓库版本历史。
+
+## 回答原则
+
+1. 所有结论都要能追溯到来源、表、字段或明确的数据缺口。
+2. 学校级、专业通用级、校专业级、招生专业组级数据不能混用。
+3. rysxai 等第三方市场样本只能作为市场观察，不代表官方校专业就业结论。
+4. 历史录取分和位次只代表历史样本，不保证未来录取。
+5. 数据缺失时进入缺口队列或人工复核路径，不编造答案。

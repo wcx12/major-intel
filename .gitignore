@@ -33,6 +33,11 @@ data/cache/
 data/processed/
 data/logs/
 reports/rysxai/
+reports/retrieval_smoke*.json
 gaokao_test_*.sql
 *.sqlite
 *.db
+
+# Local research/reference workspaces
+gaokao-zhiyuan-projects/
+docs/superpowers/
