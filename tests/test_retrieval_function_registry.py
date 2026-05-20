@@ -17,6 +17,7 @@ EXPECTED_FUNCTION_NAMES = {
     "school_major_profile",
     "score_to_rank",
     "rank_to_school_match",
+    "rank_to_major_match",
     "admission_history",
     "major_market_reference",
     "civil_service_role_search",
@@ -105,6 +106,54 @@ class FakeRetrievalTools:
             data={"buckets": {"rush": [], "stable": [], "safe": []}},
         )
 
+    def rank_to_major_match(
+        self,
+        province,
+        major_text,
+        subject_type=None,
+        score=None,
+        rank=None,
+        year=None,
+        reference_years=None,
+        preferred_regions=None,
+        school_level_filter=None,
+        limit=30,
+    ):
+        self.calls.append(
+            (
+                "rank_to_major_match",
+                {
+                    "province": province,
+                    "major_text": major_text,
+                    "subject_type": subject_type,
+                    "score": score,
+                    "rank": rank,
+                    "year": year,
+                    "reference_years": reference_years,
+                    "preferred_regions": preferred_regions,
+                    "school_level_filter": school_level_filter,
+                    "limit": limit,
+                },
+            )
+        )
+        return tool_result(
+            "rank_to_major_match",
+            "ok",
+            {
+                "province": province,
+                "major_text": major_text,
+                "subject_type": subject_type,
+                "score": score,
+                "rank": rank,
+                "year": year,
+                "reference_years": reference_years,
+                "preferred_regions": preferred_regions,
+                "school_level_filter": school_level_filter,
+                "limit": limit,
+            },
+            data={"buckets": {"rush": [], "stable": [], "safe": []}},
+        )
+
 
 class RetrievalFunctionRegistryTests(unittest.TestCase):
     def test_schema_exports_every_first_batch_retrieval_function(self):
@@ -124,10 +173,12 @@ class RetrievalFunctionRegistryTests(unittest.TestCase):
 
         score_schema = schema_for_tool("score_to_rank")["function"]["parameters"]
         match_schema = schema_for_tool("rank_to_school_match")["function"]["parameters"]
+        major_match_schema = schema_for_tool("rank_to_major_match")["function"]["parameters"]
         profile_schema = schema_for_tool("school_major_profile")["function"]["parameters"]
 
         self.assertEqual(score_schema["required"], ["province", "subject_type", "score"])
         self.assertEqual(match_schema["required"], ["province"])
+        self.assertEqual(major_match_schema["required"], ["province", "major_text"])
         self.assertEqual(profile_schema["required"], ["school_text", "major_text"])
 
     def test_dispatcher_calls_named_tool_with_arguments(self):

@@ -657,6 +657,202 @@ class RetrievalTools:
             warnings=warnings,
         )
 
+    def rank_to_major_match(
+        self,
+        province: str,
+        major_text: str,
+        subject_type: str | None = None,
+        score: int | float | str | None = None,
+        rank: int | str | None = None,
+        year: int | None = None,
+        reference_years: list[int] | None = None,
+        preferred_regions: list[str] | None = None,
+        school_level_filter: str | None = None,
+        limit: int = 30,
+    ) -> dict[str, Any]:
+        """Match an applicant rank to major-level historical rows.
+
+        This tool is narrower than `rank_to_school_match`: it resolves the
+        user's major first, then only searches admission rows that look like the
+        requested major or a close textual variant.  It still uses historical
+        rank thresholds, so the result is a planning reference rather than a
+        promise that the school or major can be admitted in a future year.
+        """
+
+        missing = _missing_slots({"province": province, "major_text": major_text})
+        if missing:
+            return _needs(
+                "rank_to_major_match",
+                {
+                    "province": province,
+                    "major_text": major_text,
+                    "subject_type": subject_type,
+                    "score": score,
+                    "rank": rank,
+                    "year": year,
+                },
+                missing,
+            )
+
+        applicant_rank = _as_int(rank)
+        score_rank_result: dict[str, Any] | None = None
+        rank_source = "provided_rank" if applicant_rank else ""
+        if applicant_rank is None:
+            if score in (None, ""):
+                return _needs(
+                    "rank_to_major_match",
+                    {
+                        "province": province,
+                        "major_text": major_text,
+                        "subject_type": subject_type,
+                        "score": score,
+                        "rank": rank,
+                        "year": year,
+                    },
+                    ["rank_or_score"],
+                )
+            if not subject_type:
+                return _needs(
+                    "rank_to_major_match",
+                    {
+                        "province": province,
+                        "major_text": major_text,
+                        "subject_type": subject_type,
+                        "score": score,
+                        "rank": rank,
+                        "year": year,
+                    },
+                    ["subject_type"],
+                )
+
+        major_result = self.major_lookup(major_text, limit=1)
+        if major_result["status"] != "ok":
+            return major_result | {"tool_name": "rank_to_major_match"}
+        major = major_result["data"]["selected_major"]
+
+        if applicant_rank is None:
+            score_rank_result = self.score_to_rank(province, subject_type, score, year)
+            if score_rank_result["status"] != "ok":
+                return score_rank_result | {"tool_name": "rank_to_major_match"}
+            applicant_rank = _as_int(score_rank_result["data"]["rank_range"].get("lowest_rank"))
+            rank_source = "score_to_rank"
+
+        if applicant_rank is None:
+            return _needs(
+                "rank_to_major_match",
+                {
+                    "province": province,
+                    "major_text": major_text,
+                    "subject_type": subject_type,
+                    "score": score,
+                    "rank": rank,
+                    "year": year,
+                },
+                ["rank_or_score"],
+            )
+
+        rows = self.client.query(
+            _rank_to_major_match_sql(
+                major=major,
+                raw_major_text=major_text,
+                province=province,
+                subject_type=subject_type,
+                applicant_rank=applicant_rank,
+                requested_year=year,
+                reference_years=reference_years,
+                preferred_regions=preferred_regions,
+                school_level_filter=school_level_filter,
+                limit=max(limit * 10, 100),
+            )
+        )
+        buckets, selected_rows = _bucket_major_matches(rows, applicant_rank, limit)
+        reference_year_values = sorted(
+            {year_value for row in selected_rows if (year_value := _as_int(row.get("year"))) is not None},
+            reverse=True,
+        )
+        history_fallback = bool(year and reference_year_values and year not in reference_year_values)
+
+        input_data = {
+            "province": province,
+            "major_text": major_text,
+            "subject_type": subject_type,
+            "score": score,
+            "rank": rank,
+            "year": year,
+            "reference_years": reference_years,
+            "preferred_regions": preferred_regions,
+            "school_level_filter": school_level_filter,
+            "limit": limit,
+        }
+        source_tables = _merge_source_tables(
+            major_result["source_tables"],
+            score_rank_result["source_tables"] if score_rank_result else [],
+            ["edu_school_admission_stats", "edu_university"],
+        )
+        normalized_slots = {
+            **major_result["normalized_slots"],
+            "province": province,
+            "subject_type": subject_type,
+            "rank": applicant_rank,
+        }
+
+        if not selected_rows:
+            return tool_result(
+                "rank_to_major_match",
+                "not_found",
+                input_data,
+                normalized_slots=normalized_slots,
+                data={
+                    "applicant": _applicant_rank_payload(
+                        province, subject_type, score, applicant_rank, rank_source, score_rank_result
+                    ),
+                    "major": major,
+                    "buckets": {"rush": [], "stable": [], "safe": []},
+                },
+                data_gaps=["本地专业录取历史"],
+                source_tables=source_tables,
+                warnings=["本地库未命中该省份/科类/专业可用于位次匹配的专业历史录取参考。"],
+            )
+
+        subject_unknown_count = sum(1 for row in selected_rows if not _text(row.get("subject_type")))
+        warnings = []
+        if history_fallback:
+            warnings.append("本地库缺少请求年份的专业录取结果，已使用最近可用历史年份作为参考。")
+        if subject_unknown_count:
+            warnings.append("部分专业历史记录没有科类字段，已按省份历史参考纳入，需谨慎解读。")
+
+        return tool_result(
+            "rank_to_major_match",
+            "ok",
+            input_data,
+            normalized_slots=normalized_slots,
+            data={
+                "applicant": _applicant_rank_payload(
+                    province, subject_type, score, applicant_rank, rank_source, score_rank_result
+                ),
+                "major": major,
+                "reference": {
+                    "requested_year": year,
+                    "reference_years": reference_year_values,
+                    "history_fallback": history_fallback,
+                    "matching_rule": "safe: rank<=bao_rank; stable: rank<=stable_rank; rush: rank<=chong_rank",
+                    "subject_unknown_count": subject_unknown_count,
+                    "major_filter": _major_match_filter_payload(major, major_text),
+                },
+                "buckets": buckets,
+                "coverage": {
+                    "candidate_rows": len(rows),
+                    "returned_major_rows": sum(len(items) for items in buckets.values()),
+                },
+            },
+            scope_notes=[
+                "本工具使用历史专业录取位次做学校-专业行参考，不代表未来录取保证。",
+                "专业名称包含大类、试验班、方向等变体时，需要结合当年招生计划和专业组继续确认。",
+            ],
+            source_tables=source_tables,
+            warnings=warnings,
+        )
+
     def admission_history(
         self,
         school_text: str | None = None,
@@ -1057,6 +1253,131 @@ LIMIT {int(limit)}
 """.strip()
 
 
+def _rank_to_major_match_sql(
+    major: dict[str, Any],
+    raw_major_text: str,
+    province: str,
+    subject_type: str | None,
+    applicant_rank: int,
+    requested_year: int | None,
+    reference_years: list[int] | None,
+    preferred_regions: list[str] | None,
+    school_level_filter: str | None,
+    limit: int,
+) -> str:
+    major_filter = _major_admission_filter_sql(major, raw_major_text)
+    clauses = [
+        "(a.deleted IS NULL OR a.deleted = b'0')",
+        f"a.province_name = {sql_quote(province)}",
+        "a.stable_rank IS NOT NULL AND a.stable_rank > 0",
+        "(a.major_name IS NOT NULL AND a.major_name <> '')",
+        major_filter,
+        (
+            f"({int(applicant_rank)} <= a.chong_rank "
+            f"OR {int(applicant_rank)} <= a.stable_rank "
+            f"OR {int(applicant_rank)} <= a.bao_rank)"
+        ),
+    ]
+    if requested_year:
+        clauses.append(f"a.year <= {int(requested_year)}")
+    if reference_years:
+        years = ", ".join(str(int(value)) for value in reference_years)
+        clauses.append(f"a.year IN ({years})")
+    if subject_type:
+        clauses.append(
+            f"(a.subject_type = {sql_quote(subject_type)} OR a.subject_type IS NULL OR a.subject_type = '')"
+        )
+    if preferred_regions:
+        regions = ", ".join(sql_quote(region) for region in preferred_regions if region)
+        if regions:
+            clauses.append(f"u.province_name IN ({regions})")
+    if school_level_filter:
+        pattern = f"%{school_level_filter}%"
+        clauses.append(
+            f"(u.level_name LIKE {sql_quote(pattern)} OR u.school_type LIKE {sql_quote(pattern)})"
+        )
+
+    subject_order = "1"
+    if subject_type:
+        subject_order = (
+            f"CASE WHEN a.subject_type = {sql_quote(subject_type)} THEN 0 "
+            "WHEN a.subject_type IS NULL OR a.subject_type = '' THEN 1 ELSE 2 END"
+        )
+
+    return f"""
+SELECT a.province_name, a.school_id, a.school_name,
+       COALESCE(u.province_name, '') AS school_province_name,
+       COALESCE(u.city_name, '') AS city_name,
+       COALESCE(u.level_name, '') AS school_level_name,
+       COALESCE(u.type_name, '') AS school_type_name,
+       COALESCE(u.is985, 0) AS is985,
+       COALESCE(u.is211, 0) AS is211,
+       COALESCE(u.is_dual_class, 0) AS is_dual_class,
+       a.major_code, a.major_name, a.subject_type, a.year,
+       a.stable_score, a.stable_rank, a.chong_score, a.chong_rank,
+       a.bao_score, a.bao_rank, a.batch, a.subject_requirement,
+       a.plan_count, a.admission_count, a.remark
+FROM edu_school_admission_stats a
+-- Keep the same join rule as school-level matching: admission rows store the
+-- national school code in `a.school_id`, not the platform-internal
+-- `edu_university.school_id`.  The school name guard prevents metadata drift
+-- when codes are missing or imported inconsistently.
+LEFT JOIN edu_university u ON u.code = CAST(a.school_id AS CHAR) AND u.name = a.school_name
+WHERE {' AND '.join(clauses)}
+ORDER BY {subject_order}, a.year DESC, ABS(a.stable_rank - {int(applicant_rank)}), a.school_name, a.major_name
+LIMIT {int(limit)}
+""".strip()
+
+
+def _major_admission_filter_sql(major: dict[str, Any], raw_major_text: str) -> str:
+    """Build the major-name/code filter for historical admission rows.
+
+    `edu_school_admission_stats` is not perfectly normalized: some rows have a
+    major code, some only have names like "计算机类" or "计算机科学与技术(试验班)".
+    The filter therefore combines safe exact code matching with controlled name
+    matching.  Very short raw nicknames such as "计科" never become a LIKE
+    clause; they must first resolve through `entity_aliases`.
+    """
+
+    filters: list[str] = []
+    major_code = _text(major.get("code")) or _text(major.get("special_id"))
+    major_name = _text(major.get("special_name"))
+    raw_text = _text(raw_major_text)
+
+    if major_code:
+        filters.append(f"a.major_code = {sql_quote(major_code)}")
+    if major_name:
+        filters.append(f"a.major_name = {sql_quote(major_name)}")
+        filters.append(f"a.major_name LIKE {sql_quote(f'%{major_name}%')}")
+    if _major_admission_raw_like_allowed(raw_text, major_name):
+        filters.append(f"a.major_name LIKE {sql_quote(f'%{raw_text}%')}")
+
+    if not filters:
+        # This branch should be rare because `major_lookup` must resolve first,
+        # but keeping the SQL valid makes defensive error envelopes possible if
+        # a future caller passes an incomplete fake major in tests.
+        filters.append("1 = 0")
+    return "(" + " OR ".join(filters) + ")"
+
+
+def _major_admission_raw_like_allowed(raw_text: str, canonical_name: str) -> bool:
+    normalized_raw = "".join(raw_text.split()).lower()
+    normalized_canonical = "".join(canonical_name.split()).lower()
+    return len(normalized_raw) >= 3 and normalized_raw not in {normalized_canonical, ""}
+
+
+def _major_match_filter_payload(major: dict[str, Any], raw_major_text: str) -> dict[str, Any]:
+    return {
+        "raw_major_text": raw_major_text,
+        "canonical_major_code": _optional_text(major.get("code") or major.get("special_id")),
+        "canonical_major_name": _optional_text(major.get("special_name")),
+        "raw_text_like_enabled": _major_admission_raw_like_allowed(
+            _text(raw_major_text),
+            _text(major.get("special_name")),
+        ),
+    }
+
+
 def _specialty_group_sql(
     school: dict[str, Any],
     major: dict[str, Any],
@@ -1287,6 +1608,69 @@ def _school_match_payload(row: dict[str, Any], applicant_rank: int, bucket: str)
     }
 
 
+def _bucket_major_matches(
+    rows: list[dict[str, Any]],
+    applicant_rank: int,
+    limit: int,
+) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
+    buckets: dict[str, list[dict[str, Any]]] = {"rush": [], "stable": [], "safe": []}
+    selected_rows: list[dict[str, Any]] = []
+    seen_major_rows: set[str] = set()
+
+    for row in rows:
+        school_key = _text(row.get("school_id")) or _text(row.get("school_name"))
+        major_key = _text(row.get("major_code")) or _text(row.get("major_name"))
+        batch_key = _text(row.get("batch"))
+        opportunity_key = "|".join([school_key, major_key, batch_key])
+        if not school_key or not major_key or opportunity_key in seen_major_rows:
+            continue
+        bucket = _school_match_bucket(row, applicant_rank)
+        if not bucket:
+            continue
+        buckets[bucket].append(_major_match_payload(row, applicant_rank, bucket))
+        selected_rows.append(row)
+        seen_major_rows.add(opportunity_key)
+        if len(selected_rows) >= limit:
+            break
+
+    return buckets, selected_rows
+
+
+def _major_match_payload(row: dict[str, Any], applicant_rank: int, bucket: str) -> dict[str, Any]:
+    stable_rank = _as_int(row.get("stable_rank"))
+    return {
+        "school_id": _optional_text(row.get("school_id")),
+        "school_name": _optional_text(row.get("school_name")),
+        "school_province_name": _optional_text(row.get("school_province_name")),
+        "city_name": _optional_text(row.get("city_name")),
+        "school_level_name": _optional_text(row.get("school_level_name")),
+        "school_type_name": _optional_text(row.get("school_type_name")),
+        "is985": _as_int(row.get("is985")),
+        "is211": _as_int(row.get("is211")),
+        "is_dual_class": _as_int(row.get("is_dual_class")),
+        "major_code": _optional_text(row.get("major_code")),
+        "major_name": _optional_text(row.get("major_name")),
+        "risk_bucket": bucket,
+        "risk_label": {"rush": "冲", "stable": "稳", "safe": "保"}[bucket],
+        "reference_year": _as_int(row.get("year")),
+        "province_name": _optional_text(row.get("province_name")),
+        "subject_type": _optional_text(row.get("subject_type")),
+        "batch": _optional_text(row.get("batch")),
+        "stable_score": _as_int(row.get("stable_score")),
+        "stable_rank": stable_rank,
+        "chong_score": _as_int(row.get("chong_score")),
+        "chong_rank": _as_int(row.get("chong_rank")),
+        "bao_score": _as_int(row.get("bao_score")),
+        "bao_rank": _as_int(row.get("bao_rank")),
+        "rank_gap_to_stable": applicant_rank - stable_rank if stable_rank is not None else None,
+        "subject_requirement": _optional_text(row.get("subject_requirement")),
+        "plan_count": _as_int(row.get("plan_count")),
+        "admission_count": _as_int(row.get("admission_count")),
+        "remark": _optional_text(row.get("remark")),
+        "row_scope": "major_or_plan_row",
+    }
+
+
 def _applicant_rank_payload(
     province: str,
     subject_type: str | None,
@@ -1394,6 +1778,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--school-level-filter")
     p.add_argument("--limit", type=int, default=30)
 
+    p = subparsers.add_parser("rank_to_major_match")
+    p.add_argument("--province", required=True)
+    p.add_argument("--major", required=True)
+    p.add_argument("--subject-type")
+    p.add_argument("--score")
+    p.add_argument("--rank")
+    p.add_argument("--year", type=int)
+    p.add_argument("--reference-years", nargs="*", type=int)
+    p.add_argument("--preferred-regions", nargs="*")
+    p.add_argument("--school-level-filter")
+    p.add_argument("--limit", type=int, default=30)
+
     p = subparsers.add_parser("admission_history")
     p.add_argument("--school")
     p.add_argument("--major")
@@ -1430,6 +1826,18 @@ def main(argv: list[str] | None = None) -> int:
         "score_to_rank": lambda: tools.score_to_rank(args.province, args.subject_type, args.score, args.year),
         "rank_to_school_match": lambda: tools.rank_to_school_match(
             args.province,
+            args.subject_type,
+            args.score,
+            args.rank,
+            args.year,
+            args.reference_years,
+            args.preferred_regions,
+            args.school_level_filter,
+            args.limit,
+        ),
+        "rank_to_major_match": lambda: tools.rank_to_major_match(
+            args.province,
+            args.major,
             args.subject_type,
             args.score,
             args.rank,

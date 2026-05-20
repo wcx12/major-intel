@@ -296,6 +296,22 @@
       ]
     },
     {
+      "id_prefix": "rank_to_major_match",
+      "tool": "rank_to_major_match",
+      "category": "major_match",
+      "target_status": "ok",
+      "allowed_statuses": ["ok", "not_found", "needs_clarification"],
+      "expected_data_keys": ["applicant", "major", "buckets"],
+      "required_source_tables": ["edu_major", "edu_school_admission_stats"],
+      "args_list": [
+        {"id_suffix": "zj_general_cs_620_2025", "args": {"province": "浙江", "subject_type": "综合", "score": 620, "year": 2025, "major": "计科", "limit": 8}},
+        {"id_suffix": "zj_general_computer_620_2025", "args": {"province": "浙江", "subject_type": "综合", "score": 620, "year": 2025, "major": "计算机", "limit": 8}},
+        {"id_suffix": "gd_physics_cs_580_2025", "args": {"province": "广东", "subject_type": "物理", "score": 580, "year": 2025, "major": "计科", "limit": 8}, "target_status": "not_found"},
+        {"id_suffix": "missing_rank_or_score", "args": {"province": "浙江", "subject_type": "综合", "year": 2025, "major": "计科"}, "target_status": "needs_clarification"},
+        {"id_suffix": "unknown_major", "args": {"province": "浙江", "subject_type": "综合", "score": 620, "year": 2025, "major": "星际航道规划与管理", "limit": 5}, "target_status": "not_found"}
+      ]
+    },
+    {
       "id_prefix": "admission_history",
       "tool": "admission_history",
       "category": "admission",

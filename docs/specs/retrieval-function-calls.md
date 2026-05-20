@@ -69,7 +69,7 @@
 
 ### 当前已落地能力快照
 
-截至 2026-05-20，当前已经落地 13 个可调用检索入口：
+截至 2026-05-20，当前已经落地 14 个可调用检索入口：
 
 ```text
 school_lookup
@@ -81,6 +81,7 @@ major_school_list
 school_major_profile
 score_to_rank
 rank_to_school_match
+rank_to_major_match
 admission_history
 major_market_reference
 civil_service_role_search
@@ -96,6 +97,7 @@ data_gap_detection
 - 能把同省、同科类、同年份分数转换为位次区间。
 - 能查询历年录取分和位次。
 - 能按分数或位次返回学校层面的冲/稳/保参考，并在请求年份缺数时标记历史年份回退。
+- 能按分数或位次 + 专业偏好返回学校-专业行层面的冲/稳/保参考，并保留专业大类、试验班、方向等变体提示。
 - 能读取已接入的专业市场样本和考公岗位样本。
 - 能识别当前问题还缺哪些本地数据，避免 agent 编造。
 
@@ -120,7 +122,7 @@ data_gap_detection
 | 1 | `admission_history` | P0 | 查历年录取分和位次 | A | 已完成 | 支持学校、专业、省份、科类、年份筛选 |
 | 1 | `data_gap_detection` | P0 | 识别缺失数据 | A | 已完成 | 返回当前问题缺少哪些本地数据，不编造 |
 | 2 | `rank_to_school_match` | P0 | 按位次推荐学校 | A/B | 已完成 | 支持输入位次或分数，输出冲/稳/保学校桶；请求年份缺数时明确标记历史参考 |
-| 2 | `rank_to_major_match` | P0 | 按位次和专业推荐学校专业 | A/B | 待制作 | 在 `rank_to_school_match` 后实现 |
+| 2 | `rank_to_major_match` | P0 | 按位次和专业推荐学校专业 | A/B | 已完成 | 支持输入位次或分数 + 专业偏好，输出学校-专业行冲/稳/保桶 |
 | 2 | `specialty_group_lookup` | P0 | 查专业组和组内专业 | A | 待制作 | 已有部分专业组查询逻辑，尚未独立成工具 |
 | 2 | `plan_history` | P1 | 查招生计划变化 | A | 待制作 | 需要先审计招生计划字段 |
 | 2 | `subject_requirement_lookup` | P1 | 查选科要求 | A/B | 待制作 | 可从专业组/招生计划中抽取 |
@@ -656,12 +658,22 @@ edu_score_rank
 
 输入省份、科类、位次、专业偏好，返回可报学校专业列表。
 
+当前实现：
+
+- 先调用 `major_lookup` 解析专业，支持 `entity_aliases` 中已确认简称，例如“计科”。
+- 直接输入位次时用位次匹配；只输入分数时先调用 `score_to_rank` 取保守位次。
+- 查询 `edu_school_admission_stats` 中的专业录取行，按 `chong_rank`、`stable_rank`、`bao_rank` 映射为 `rush`、`stable`、`safe` 三个桶。
+- 专业历史行会保留 `major_code`、`major_name`、`subject_requirement`、`plan_count`、`batch`、`remark`，方便后续继续查专业组和招生计划。
+- 结果是历史专业行参考，不保证未来录取；专业大类、试验班、方向等变体需要结合当年招生计划继续确认。
+
 核心表：
 
 ```text
 edu_school_admission_stats
 edu_major
+entity_aliases
 edu_university
+edu_score_rank
 ```
 
 ### `specialty_group_lookup`
@@ -877,15 +889,15 @@ data_gap_detection
 当前完成记录（2026-05-20）：
 
 - 第一阶段 10 个 P0 工具已经全部实现。
-- 第二阶段 `rank_to_school_match` 已完成第一版，可按位次或分数返回冲/稳/保学校桶，并标记历史年份回退。
+- 第二阶段 `rank_to_school_match` 与 `rank_to_major_match` 已完成第一版，可按位次或分数返回冲/稳/保学校桶/学校-专业行桶，并标记历史年份回退。
 - `major_market_reference` 和 `civil_service_role_search` 已经提前实现，用于读取已经接入的市场样本和考公岗位样本。
 - 已完成 agent function schema 注册层：`scripts/retrieval_function_registry.py`。
 - 已完成本地批量烟测脚本：`scripts/run_retrieval_smoke_cases.py`。
 - 已完成数据库别名初始化脚本：`scripts/setup_entity_aliases.py`，会创建/维护 `entity_aliases` 与 `entity_alias_candidates`。
 - 已修复 MySQL CLI 长文本换行解析问题，`major_lookup` 不会再把专业介绍里的“关键词/课程列表”拆成假候选记录。
 - 已完成 `major_lookup` 数据库别名解析，真实库验证“计科”返回“计算机科学与技术”，“软工”返回“软件工程”。
-- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 72 个测试通过。
-- 当前烟测用例矩阵覆盖 13 个工具入口；本轮真实库抽样验证 `rank_to_school_match` 3 条样本通过。
+- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 79 个测试通过。
+- 当前烟测用例矩阵覆盖 14 个工具入口；本轮真实库抽样验证 `rank_to_school_match`、`rank_to_major_match` 样本通过。
 
 第一阶段完成时应满足：
 

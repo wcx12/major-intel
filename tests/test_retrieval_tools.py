@@ -345,6 +345,143 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(result["status"], "not_found")
         self.assertIn("本地库未命中", result["warnings"][0])
 
+    def test_rank_to_major_match_requires_major_and_rank_or_score(self):
+        tools = RetrievalTools(FakeClient([]))
+
+        missing_major = tools.rank_to_major_match(province="浙江", subject_type="综合", major_text="")
+        missing_rank = tools.rank_to_major_match(province="浙江", subject_type="综合", major_text="计科")
+
+        self.assertEqual(missing_major["status"], "needs_clarification")
+        self.assertEqual(missing_major["needs_clarification"], ["major_text"])
+        self.assertEqual(missing_rank["status"], "needs_clarification")
+        self.assertEqual(missing_rank["needs_clarification"], ["rank_or_score"])
+
+    def test_rank_to_major_match_uses_major_alias_score_rank_and_history(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_major", [MAJOR]),
+                    (
+                        "FROM edu_score_rank",
+                        [
+                            {
+                                "province_id": "44",
+                                "year": "2025",
+                                "subject_type": "物理",
+                                "score": "580",
+                                "same_count": "1035",
+                                "highest_rank": "43758",
+                                "lowest_rank": "44792",
+                            }
+                        ],
+                    ),
+                    (
+                        "FROM edu_school_admission_stats a",
+                        [
+                            {
+                                "province_name": "广东",
+                                "school_id": "10001",
+                                "school_name": "冲刺大学",
+                                "school_province_name": "北京",
+                                "city_name": "北京市",
+                                "is985": "1",
+                                "is211": "1",
+                                "is_dual_class": "1",
+                                "major_code": "080901",
+                                "major_name": "计算机科学与技术",
+                                "subject_type": "物理",
+                                "year": "2024",
+                                "stable_score": "610",
+                                "stable_rank": "43000",
+                                "chong_score": "600",
+                                "chong_rank": "56000",
+                                "bao_score": "620",
+                                "bao_rank": "30000",
+                                "batch": "本科批",
+                                "subject_requirement": "物理+化学",
+                                "plan_count": "4",
+                                "admission_count": "4",
+                                "remark": "",
+                            },
+                            {
+                                "province_name": "广东",
+                                "school_id": "10002",
+                                "school_name": "稳妥大学",
+                                "school_province_name": "浙江",
+                                "city_name": "杭州市",
+                                "is985": "0",
+                                "is211": "0",
+                                "is_dual_class": "0",
+                                "major_code": "080901",
+                                "major_name": "计算机科学与技术",
+                                "subject_type": "物理",
+                                "year": "2024",
+                                "stable_score": "590",
+                                "stable_rank": "46000",
+                                "chong_score": "580",
+                                "chong_rank": "59000",
+                                "bao_score": "600",
+                                "bao_rank": "33000",
+                                "batch": "本科批",
+                                "subject_requirement": "物理+化学",
+                                "plan_count": "8",
+                                "admission_count": "8",
+                                "remark": "",
+                            },
+                            {
+                                "province_name": "广东",
+                                "school_id": "10003",
+                                "school_name": "保底大学",
+                                "school_province_name": "江苏",
+                                "city_name": "南京市",
+                                "is985": "0",
+                                "is211": "1",
+                                "is_dual_class": "1",
+                                "major_code": "080901",
+                                "major_name": "计算机科学与技术",
+                                "subject_type": "",
+                                "year": "2024",
+                                "stable_score": "560",
+                                "stable_rank": "70000",
+                                "chong_score": "550",
+                                "chong_rank": "91000",
+                                "bao_score": "570",
+                                "bao_rank": "50000",
+                                "batch": "本科批",
+                                "subject_requirement": "",
+                                "plan_count": "12",
+                                "admission_count": "12",
+                                "remark": "含创新班",
+                            },
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.rank_to_major_match(
+            province="广东",
+            subject_type="物理",
+            major_text="计科",
+            score=580,
+            year=2025,
+            limit=10,
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["normalized_slots"]["major_code"], "080901")
+        self.assertEqual(result["data"]["applicant"]["rank"], 44792)
+        self.assertTrue(result["data"]["reference"]["history_fallback"])
+        self.assertEqual(result["data"]["buckets"]["rush"][0]["school_name"], "冲刺大学")
+        self.assertEqual(result["data"]["buckets"]["stable"][0]["school_name"], "稳妥大学")
+        self.assertEqual(result["data"]["buckets"]["safe"][0]["school_name"], "保底大学")
+        self.assertEqual(result["data"]["buckets"]["safe"][0]["major_name"], "计算机科学与技术")
+        self.assertEqual(result["data"]["buckets"]["safe"][0]["plan_count"], 12)
+        self.assertIn("entity_aliases", result["source_tables"])
+        self.assertIn("edu_school_admission_stats", result["source_tables"])
+        self.assertIn("a.major_code = '080901'", tools.client.queries[-1])
+        self.assertIn("a.year <= 2025", tools.client.queries[-1])
+
     def test_major_market_reference_uses_ingested_market_tables(self):
         tools = RetrievalTools(
             FakeClient(
