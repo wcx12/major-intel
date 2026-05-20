@@ -771,7 +771,6 @@ def _repair_text_tree(value: Any) -> Any:
 def _repair_mojibake(value: str) -> str:
     if not value or value.isascii():
         return value
-    looks_broken = _private_use_count(value) or _mojibake_marker_count(value) >= 1
     try:
         # Some upstream strings already contain replacement/private-use
         # characters.  Strict reverse decoding would abandon the whole field,
@@ -782,19 +781,41 @@ def _repair_mojibake(value: str) -> str:
         return value
     if repaired == value:
         return value
-    if not looks_broken and not _looks_like_better_chinese(value, repaired):
-        return value
-    return repaired
+
+    original_damage = _encoding_damage_count(value)
+    repaired_damage = _encoding_damage_count(repaired)
+    marker_count = _mojibake_marker_count(value)
+
+    if original_damage > repaired_damage and _looks_like_better_chinese(value, repaired):
+        return repaired
+    if (
+        marker_count >= 2
+        and repaired_damage <= original_damage
+        and _looks_like_better_chinese(value, repaired)
+    ):
+        return repaired
+    if (
+        marker_count >= 1
+        and len(value) < 200
+        and repaired_damage <= original_damage
+        and _looks_like_better_chinese(value, repaired)
+    ):
+        return repaired
+    return value
 
 
 def _looks_like_better_chinese(original: str, repaired: str) -> bool:
-    if "�" in repaired:
+    if "\ufffd" in repaired:
         return False
     original_cjk = _cjk_count(original)
     repaired_cjk = _cjk_count(repaired)
     if original_cjk == 0:
         return repaired_cjk > 0
     return repaired_cjk >= max(1, int(original_cjk * 0.6))
+
+
+def _encoding_damage_count(value: str) -> int:
+    return _private_use_count(value) + value.count("\ufffd")
 
 
 def _cjk_count(value: str) -> int:

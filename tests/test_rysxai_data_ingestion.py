@@ -222,6 +222,19 @@ class RysxaiDataIngestionTests(unittest.TestCase):
             "rysxai_transfer_policy/v1",
         )
 
+    def test_transfer_policy_record_to_row_does_not_corrupt_valid_chinese_policy_text(self):
+        record = json.loads(json.dumps(TRANSFER_POLICY_RECORD, ensure_ascii=False))
+        record["transfer_policy"]["change_profession"] = (
+            "## 中国语言文学系\n\n### 转专业申请条件\n\n学生可在规定时间内申请，条件包含面试和成绩排名。"
+        )
+
+        row = transfer_policy_record_to_row(record)
+
+        self.assertIn("中国语言文学系", row["change_profession"])
+        self.assertIn("转专业申请条件", row["change_profession"])
+        self.assertIn("条件包含面试", row["change_profession"])
+        self.assertNotIn("�й", row["change_profession"])
+
     def test_build_schema_sql_contains_tables_and_idempotent_keys(self):
         schema_sql = build_schema_sql()
 
