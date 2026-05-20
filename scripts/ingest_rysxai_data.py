@@ -23,6 +23,12 @@ MARKET_SNAPSHOT_TABLE = "rysxai_major_market_snapshots"
 MARKET_SAMPLE_TABLE = "rysxai_major_job_samples"
 CIVIL_ROLE_TABLE = "rysxai_civil_service_roles"
 CIVIL_CANDIDATE_TABLE = "civil_service_major_role_candidates"
+TRANSFER_POLICY_TABLE = "rysxai_transfer_policies"
+MOJIBAKE_MARKERS = frozenset(
+    "澶嶆棪涓婃捣鏈娴欐睙鍖椾含鏉窞缁煎悎鍏姙鏁欒偛"
+    "杞笓涓氭斂绛栫敵璇锋潯浠跺噯鍏ヨ姹傝€冩牳"
+    "淇伅瀛﹂櫌鐢宠"
+)
 
 
 @dataclass(frozen=True)
@@ -213,6 +219,48 @@ CREATE TABLE IF NOT EXISTS {CIVIL_CANDIDATE_TABLE} (
   KEY idx_major_code (major_code),
   KEY idx_match_status (match_status)
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS {TRANSFER_POLICY_TABLE} (
+  school_id BIGINT NOT NULL,
+  school_name VARCHAR(255) NULL,
+  province VARCHAR(100) NULL,
+  city VARCHAR(100) NULL,
+  town VARCHAR(100) NULL,
+  school_type VARCHAR(100) NULL,
+  property VARCHAR(100) NULL,
+  school_level VARCHAR(50) NULL,
+  department VARCHAR(255) NULL,
+  tags_json JSON NULL,
+  rank_list_json JSON NULL,
+  fetched_at VARCHAR(50) NULL,
+  source_name VARCHAR(50) NULL,
+  source_level VARCHAR(10) NULL,
+  data_scope VARCHAR(100) NULL,
+  source_url VARCHAR(500) NULL,
+  source_endpoint VARCHAR(20) NULL,
+  has_transfer_policy TINYINT(1) NOT NULL DEFAULT 0,
+  has_faculty_policy TINYINT(1) NOT NULL DEFAULT 0,
+  faculty_policy_count INT NULL,
+  change_profession_chars INT NULL,
+  application_condition_chars INT NULL,
+  admission_requirement_chars INT NULL,
+  assessment_chars INT NULL,
+  is_new_version TINYINT(1) NOT NULL DEFAULT 0,
+  change_profession MEDIUMTEXT NULL,
+  change_profession_application_condition MEDIUMTEXT NULL,
+  change_profession_admission_requirement MEDIUMTEXT NULL,
+  change_profession_assessment MEDIUMTEXT NULL,
+  change_profession_by_faculty_json JSON NULL,
+  warnings_json JSON NULL,
+  raw_policy_json JSON NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (school_id),
+  KEY idx_transfer_school_name (school_name),
+  KEY idx_transfer_province_level (province, school_level),
+  KEY idx_transfer_source_endpoint (source_endpoint),
+  KEY idx_transfer_availability (has_transfer_policy, has_faculty_policy)
+) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 """.strip()
 
 
@@ -345,6 +393,66 @@ def civil_role_record_to_rows(
     return role_row, candidate_rows
 
 
+def transfer_policy_record_to_row(record: dict[str, Any]) -> dict[str, Any]:
+    """Convert one rysxai transfer-policy JSONL record into a SQL-ready row."""
+
+    school = record.get("school") or {}
+    school_id = _to_int(school.get("id"))
+    if school_id is None:
+        raise ValueError("transfer-policy record missing school.id")
+
+    source = record.get("source") or {}
+    policy = record.get("transfer_policy") or {}
+    availability = record.get("availability") or {}
+    source_url = _text(source.get("source_url"))
+    repaired_faculty = _repair_text_tree(policy.get("change_profession_by_faculty") or [])
+
+    return {
+        "school_id": school_id,
+        "school_name": _repair_mojibake(_text(school.get("name"))),
+        "province": _repair_mojibake(_text(school.get("province"))),
+        "city": _repair_mojibake(_text(school.get("city"))),
+        "town": _repair_mojibake(_text(school.get("town"))),
+        "school_type": _repair_mojibake(_text(school.get("type"))),
+        "property": _repair_mojibake(_text(school.get("property"))),
+        "school_level": _repair_mojibake(_text(school.get("level"))),
+        "department": _repair_mojibake(_text(school.get("department"))),
+        "tags_json": _json_text(_repair_text_tree(school.get("tags") or [])),
+        "rank_list_json": _json_text(school.get("rank_list") or []),
+        "fetched_at": _text(record.get("fetched_at")),
+        "source_name": _text(source.get("name")),
+        "source_level": _text(source.get("source_level")),
+        "data_scope": _text(source.get("data_scope")),
+        "source_url": source_url,
+        "source_endpoint": _transfer_source_endpoint(source_url),
+        "has_transfer_policy": _bool_int(availability.get("has_transfer_policy")),
+        "has_faculty_policy": _bool_int(availability.get("has_faculty_policy")),
+        "faculty_policy_count": _to_int(availability.get("faculty_policy_count")),
+        "change_profession_chars": _to_int(availability.get("change_profession_chars")),
+        "application_condition_chars": _to_int(
+            availability.get("application_condition_chars")
+        ),
+        "admission_requirement_chars": _to_int(
+            availability.get("admission_requirement_chars")
+        ),
+        "assessment_chars": _to_int(availability.get("assessment_chars")),
+        "is_new_version": _bool_int(policy.get("is_new_version")),
+        "change_profession": _repair_mojibake(_text(policy.get("change_profession"))),
+        "change_profession_application_condition": _repair_mojibake(
+            _text(policy.get("change_profession_application_condition"))
+        ),
+        "change_profession_admission_requirement": _repair_mojibake(
+            _text(policy.get("change_profession_admission_requirement"))
+        ),
+        "change_profession_assessment": _repair_mojibake(
+            _text(policy.get("change_profession_assessment"))
+        ),
+        "change_profession_by_faculty_json": _json_text(repaired_faculty),
+        "warnings_json": _json_text(_repair_text_tree(record.get("warnings") or [])),
+        "raw_policy_json": _json_text(record),
+    }
+
+
 def build_insert_sql(
     table_name: str,
     rows: list[dict[str, Any]],
@@ -389,6 +497,23 @@ def load_market_snapshots(processed_dir: Path, limit: int | None = None) -> list
 
 def load_civil_role_records(jsonl_path: Path, limit: int | None = None) -> list[dict[str, Any]]:
     """Load civil-service role records from JSONL while ignoring blank lines."""
+
+    records = []
+    with jsonl_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            records.append(json.loads(line))
+            if limit is not None and len(records) >= limit:
+                break
+    return records
+
+
+def load_transfer_policy_records(
+    jsonl_path: Path, limit: int | None = None
+) -> list[dict[str, Any]]:
+    """Load transfer-policy records from JSONL while ignoring blank lines."""
 
     records = []
     with jsonl_path.open("r", encoding="utf-8") as handle:
@@ -466,6 +591,21 @@ def ingest_civil(
     }
 
 
+def ingest_transfer(
+    runner: MysqlCliRunner,
+    jsonl_path: Path,
+    limit: int | None = None,
+    chunk_size: int = 200,
+) -> dict[str, int]:
+    records = load_transfer_policy_records(jsonl_path, limit=limit)
+    policy_rows = [transfer_policy_record_to_row(record) for record in records]
+
+    for chunk in _chunks(policy_rows, chunk_size):
+        runner.run(build_insert_sql(TRANSFER_POLICY_TABLE, chunk, ["school_id"]))
+
+    return {"policies": len(policy_rows)}
+
+
 def summarize(runner: MysqlCliRunner) -> str:
     return runner.run(
         f"""
@@ -475,7 +615,9 @@ SELECT '{MARKET_SAMPLE_TABLE}', COUNT(*) FROM {MARKET_SAMPLE_TABLE}
 UNION ALL
 SELECT '{CIVIL_ROLE_TABLE}', COUNT(*) FROM {CIVIL_ROLE_TABLE}
 UNION ALL
-SELECT '{CIVIL_CANDIDATE_TABLE}', COUNT(*) FROM {CIVIL_CANDIDATE_TABLE};
+SELECT '{CIVIL_CANDIDATE_TABLE}', COUNT(*) FROM {CIVIL_CANDIDATE_TABLE}
+UNION ALL
+SELECT '{TRANSFER_POLICY_TABLE}', COUNT(*) FROM {TRANSFER_POLICY_TABLE};
 """.strip(),
         capture_output=True,
     )
@@ -501,6 +643,18 @@ def main(argv: list[str] | None = None) -> int:
     civil_parser.add_argument("--limit", type=int)
     civil_parser.add_argument("--chunk-size", type=int, default=200)
 
+    transfer_parser = subparsers.add_parser(
+        "ingest-transfer",
+        help="Ingest school transfer-major policy JSONL.",
+    )
+    transfer_parser.add_argument(
+        "--jsonl",
+        type=Path,
+        default=Path("data/raw/rysxai_transfer_policies.jsonl"),
+    )
+    transfer_parser.add_argument("--limit", type=int)
+    transfer_parser.add_argument("--chunk-size", type=int, default=200)
+
     subparsers.add_parser("summarize", help="Show ingestion table counts.")
 
     args = parser.parse_args(argv)
@@ -523,6 +677,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "ingest-civil":
         stats = ingest_civil(
+            runner,
+            jsonl_path=args.jsonl,
+            limit=args.limit,
+            chunk_size=args.chunk_size,
+        )
+        print(json.dumps(stats, ensure_ascii=False, sort_keys=True))
+        return 0
+
+    if args.command == "ingest-transfer":
+        stats = ingest_transfer(
             runner,
             jsonl_path=args.jsonl,
             limit=args.limit,
@@ -584,6 +748,69 @@ def _extract_civil_major_candidates(role_id: int, profession_text: str) -> list[
 def _clean_major_name(value: str | None) -> str:
     text = _text(value)
     return text.strip(" ：:()（）")
+
+
+def _transfer_source_endpoint(source_url: str) -> str:
+    if "/docs/new/" in source_url:
+        return "new"
+    if "/docs/" in source_url:
+        return "legacy"
+    return "unknown"
+
+
+def _repair_text_tree(value: Any) -> Any:
+    if isinstance(value, str):
+        return _repair_mojibake(value)
+    if isinstance(value, list):
+        return [_repair_text_tree(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _repair_text_tree(item) for key, item in value.items()}
+    return value
+
+
+def _repair_mojibake(value: str) -> str:
+    if not value or value.isascii():
+        return value
+    looks_broken = _private_use_count(value) or _mojibake_marker_count(value) >= 1
+    try:
+        # Some upstream strings already contain replacement/private-use
+        # characters.  Strict reverse decoding would abandon the whole field,
+        # but a tolerant pass still recovers the useful Chinese policy text
+        # around the damaged bytes, such as "申请转专业".
+        repaired = value.encode("gb18030", errors="replace").decode("utf-8", errors="replace")
+    except UnicodeError:
+        return value
+    if repaired == value:
+        return value
+    if not looks_broken and not _looks_like_better_chinese(value, repaired):
+        return value
+    return repaired
+
+
+def _looks_like_better_chinese(original: str, repaired: str) -> bool:
+    if "�" in repaired:
+        return False
+    original_cjk = _cjk_count(original)
+    repaired_cjk = _cjk_count(repaired)
+    if original_cjk == 0:
+        return repaired_cjk > 0
+    return repaired_cjk >= max(1, int(original_cjk * 0.6))
+
+
+def _cjk_count(value: str) -> int:
+    return sum(1 for char in value if "\u4e00" <= char <= "\u9fff")
+
+
+def _private_use_count(value: str) -> int:
+    return sum(1 for char in value if 0xE000 <= ord(char) <= 0xF8FF)
+
+
+def _mojibake_marker_count(value: str) -> int:
+    return sum(1 for char in value if char in MOJIBAKE_MARKERS)
+
+
+def _bool_int(value: Any) -> int:
+    return 1 if bool(value) else 0
 
 
 def _ordered_columns(rows: list[dict[str, Any]]) -> list[str]:

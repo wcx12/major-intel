@@ -2,10 +2,14 @@ import json
 import unittest
 
 from scripts.ingest_rysxai_data import (
+    TRANSFER_POLICY_TABLE,
     build_insert_sql,
     build_schema_sql,
     civil_role_record_to_rows,
+    ingest_transfer,
+    load_transfer_policy_records,
     market_snapshot_to_rows,
+    transfer_policy_record_to_row,
 )
 
 
@@ -97,6 +101,55 @@ CIVIL_ROLE_RECORD = {
 }
 
 
+def mojibake(text):
+    return text.encode("utf-8").decode("gb18030", errors="replace")
+
+
+TRANSFER_POLICY_RECORD = {
+    "schema_version": "rysxai_transfer_policy/v1",
+    "fetched_at": "2026-05-20T14:48:04+08:00",
+    "source": {
+        "name": "rysxai",
+        "source_level": "C",
+        "source_url": "https://api.rysxai.cn/api/ry_education/university/docs/new/?id=903",
+        "data_scope": "school_transfer_major_policy",
+    },
+    "school": {
+        "id": 903,
+        "name": mojibake("浙江大学"),
+        "province": mojibake("浙江"),
+        "city": mojibake("杭州"),
+        "town": mojibake("西湖区"),
+        "type": mojibake("综合"),
+        "property": mojibake("公办"),
+        "level": mojibake("本科"),
+        "department": mojibake("教育部"),
+        "tags": ["985", "211", mojibake("双一流")],
+        "rank_list": [{"qs": "47"}],
+    },
+    "transfer_policy": {
+        "change_profession": mojibake("学生申请"),
+        "change_profession_by_faculty": [
+            {"faculty_name": mojibake("信息学院"), "rows": []}
+        ],
+        "change_profession_application_condition": mojibake("申请条件文本"),
+        "change_profession_admission_requirement": mojibake("准入要求文本"),
+        "change_profession_assessment": mojibake("考核方式文本"),
+        "is_new_version": True,
+    },
+    "availability": {
+        "has_transfer_policy": True,
+        "has_faculty_policy": True,
+        "faculty_policy_count": 1,
+        "change_profession_chars": 18,
+        "application_condition_chars": 6,
+        "admission_requirement_chars": 6,
+        "assessment_chars": 6,
+    },
+    "warnings": ["verify against official school notices"],
+}
+
+
 class RysxaiDataIngestionTests(unittest.TestCase):
     def test_market_snapshot_to_rows_preserves_scope_and_job_samples(self):
         snapshot_row, sample_rows = market_snapshot_to_rows(MARKET_SNAPSHOT)
@@ -149,6 +202,26 @@ class RysxaiDataIngestionTests(unittest.TestCase):
         self.assertEqual(candidate_rows[0]["major_code"], "")
         self.assertEqual(candidate_rows[0]["profession_text"], "计算机类、电子信息类及相关专业")
 
+    def test_transfer_policy_record_to_row_preserves_scope_and_repairs_display_text(self):
+        row = transfer_policy_record_to_row(TRANSFER_POLICY_RECORD)
+
+        self.assertEqual(row["school_id"], 903)
+        self.assertEqual(row["school_name"], "浙江大学")
+        self.assertEqual(row["province"], "浙江")
+        self.assertEqual(row["school_level"], "本科")
+        self.assertEqual(row["source_level"], "C")
+        self.assertEqual(row["data_scope"], "school_transfer_major_policy")
+        self.assertEqual(row["source_endpoint"], "new")
+        self.assertEqual(row["has_transfer_policy"], 1)
+        self.assertEqual(row["has_faculty_policy"], 1)
+        self.assertEqual(row["faculty_policy_count"], 1)
+        self.assertIn("\u5b66\u751f\u7533\u8bf7", row["change_profession"])
+        self.assertIn("\u4fe1\u606f\u5b66\u9662", row["change_profession_by_faculty_json"])
+        self.assertEqual(
+            json.loads(row["raw_policy_json"])["schema_version"],
+            "rysxai_transfer_policy/v1",
+        )
+
     def test_build_schema_sql_contains_tables_and_idempotent_keys(self):
         schema_sql = build_schema_sql()
 
@@ -156,8 +229,10 @@ class RysxaiDataIngestionTests(unittest.TestCase):
         self.assertIn("CREATE TABLE IF NOT EXISTS rysxai_major_job_samples", schema_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS rysxai_civil_service_roles", schema_sql)
         self.assertIn("CREATE TABLE IF NOT EXISTS civil_service_major_role_candidates", schema_sql)
+        self.assertIn("CREATE TABLE IF NOT EXISTS rysxai_transfer_policies", schema_sql)
         self.assertIn("UNIQUE KEY uk_profession_sample", schema_sql)
         self.assertIn("UNIQUE KEY uk_role_candidate", schema_sql)
+        self.assertIn("PRIMARY KEY (school_id)", schema_sql)
 
     def test_build_insert_sql_escapes_values_without_exposing_passwords(self):
         sql = build_insert_sql(
@@ -171,6 +246,63 @@ class RysxaiDataIngestionTests(unittest.TestCase):
         self.assertIn("ON DUPLICATE KEY UPDATE", sql)
         self.assertNotIn("MYSQL_PWD", sql)
         self.assertNotIn("GAOKAO_DB_PASSWORD", sql)
+
+    def test_load_transfer_policy_records_reads_jsonl_with_limit(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as temp_dir:
+            jsonl_path = Path(temp_dir) / "transfer.jsonl"
+            jsonl_path.write_text(
+                json.dumps(TRANSFER_POLICY_RECORD, ensure_ascii=False)
+                + "\n"
+                + json.dumps(
+                    {
+                        **TRANSFER_POLICY_RECORD,
+                        "school": {**TRANSFER_POLICY_RECORD["school"], "id": 904},
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            records = load_transfer_policy_records(jsonl_path, limit=1)
+
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["school"]["id"], 903)
+
+    def test_ingest_transfer_builds_idempotent_chunks(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        class FakeRunner:
+            def __init__(self):
+                self.sql_statements = []
+
+            def run(self, sql, capture_output=False):
+                self.sql_statements.append(sql)
+                return ""
+
+        with TemporaryDirectory() as temp_dir:
+            jsonl_path = Path(temp_dir) / "transfer.jsonl"
+            records = []
+            for school_id in [903, 904, 905]:
+                record = json.loads(json.dumps(TRANSFER_POLICY_RECORD, ensure_ascii=False))
+                record["school"]["id"] = school_id
+                records.append(record)
+            jsonl_path.write_text(
+                "\n".join(json.dumps(record, ensure_ascii=False) for record in records) + "\n",
+                encoding="utf-8",
+            )
+            runner = FakeRunner()
+
+            stats = ingest_transfer(runner, jsonl_path, chunk_size=2)
+
+            self.assertEqual(stats, {"policies": 3})
+            self.assertEqual(len(runner.sql_statements), 2)
+            self.assertTrue(all(TRANSFER_POLICY_TABLE in sql for sql in runner.sql_statements))
+            self.assertTrue(all("ON DUPLICATE KEY UPDATE" in sql for sql in runner.sql_statements))
 
 
 if __name__ == "__main__":
