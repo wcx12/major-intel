@@ -5,6 +5,7 @@ from scripts.local_retrieval_mvp import (
     build_profile,
     build_school_major_sql,
     render_markdown_answer,
+    resolve_major_sql,
 )
 
 
@@ -47,6 +48,12 @@ EMPLOYMENT = {
 
 
 class LocalRetrievalMvpTests(unittest.TestCase):
+    def test_major_lookup_alias_avoids_short_fuzzy_match(self):
+        sql = resolve_major_sql("计科")
+
+        self.assertIn("计算机科学与技术", sql)
+        self.assertNotIn("special_name LIKE '%计科%'", sql)
+
     def test_parse_mysql_tsv_decodes_escaped_newlines_and_nulls(self):
         rows = _parse_mysql_tsv("id\tdescription\toptional\n1\t第一行\\r\\n第二行\tNULL\n")
 
