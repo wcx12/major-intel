@@ -22,9 +22,9 @@ class FakeClient:
 
     def query(self, sql):
         self.queries.append(sql)
-        for needle, rows in self.routes:
-            if needle in sql:
-                return rows
+        matches = [(needle, rows) for needle, rows in self.routes if needle in sql]
+        if matches:
+            return max(matches, key=lambda item: len(item[0]))[1]
         return []
 
 
@@ -481,6 +481,306 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertIn("edu_school_admission_stats", result["source_tables"])
         self.assertIn("a.major_code = '080901'", tools.client.queries[-1])
         self.assertIn("a.year <= 2025", tools.client.queries[-1])
+
+    def test_specialty_group_lookup_returns_group_and_all_group_majors(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_major", [MAJOR]),
+                    (
+                        "FROM edu_college_specialty_group g",
+                        [
+                            {
+                                "year": "2025",
+                                "province": "33",
+                                "group_code": "001",
+                                "group_name": "物理化学组",
+                                "group_type": "综合",
+                                "group_plan_count": "120",
+                                "allow_adjustment": "1",
+                                "special_code": "080901",
+                                "special_name": "计算机科学与技术",
+                                "major_plan_count": "80",
+                                "subject_requirement": "物理,化学",
+                            },
+                            {
+                                "year": "2025",
+                                "province": "33",
+                                "group_code": "001",
+                                "group_name": "物理化学组",
+                                "group_type": "综合",
+                                "group_plan_count": "120",
+                                "allow_adjustment": "1",
+                                "special_code": "080902",
+                                "special_name": "软件工程",
+                                "major_plan_count": "40",
+                                "subject_requirement": "物理,化学",
+                            },
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.specialty_group_lookup(
+            school_text="杭州电子科技大学",
+            major_text="计科",
+            province="浙江",
+            subject_type="综合",
+            year=2025,
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["groups"][0]["group_code"], "001")
+        self.assertEqual(len(result["data"]["groups"][0]["majors"]), 2)
+        self.assertIn("g.year = 2025", tools.client.queries[-1])
+        self.assertIn("gm_filter.special_code = '080901'", tools.client.queries[-1])
+        self.assertIn("专业组样本", result["scope_notes"][0])
+
+    def test_subject_requirement_lookup_collects_distinct_requirements(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_major", [MAJOR]),
+                    (
+                        "FROM edu_college_specialty_group g",
+                        [
+                            {
+                                "school_name": "杭州电子科技大学",
+                                "school_id": "10336",
+                                "year": "2025",
+                                "province": "33",
+                                "group_code": "001",
+                                "group_name": "物化组",
+                                "group_type": "综合",
+                                "special_code": "080901",
+                                "special_name": "计算机科学与技术",
+                                "subject_requirement": "物理,化学",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.subject_requirement_lookup("计科", province="浙江", subject_type="综合", year=2025)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["requirements"], ["物理,化学"])
+        self.assertIn("edu_college_specialty_group", result["source_tables"])
+
+    def test_school_department_major_list_returns_departments_and_majors(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    (
+                        "FROM edu_university_department d",
+                        [
+                            {
+                                "dept_id": "1",
+                                "dept_name": "计算机学院",
+                                "website_url": "https://cs.example.edu",
+                                "major_code": "080901",
+                                "major_name": "计算机科学与技术",
+                                "education_level": "本科",
+                                "is_nation_first_class": "1",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.school_department_major_list("杭州电子科技大学", department_text="计算机")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["departments"][0]["dept_name"], "计算机学院")
+        self.assertEqual(result["data"]["departments"][0]["majors"][0]["major_code"], "080901")
+        self.assertIn("d.dept_name LIKE '%计算机%'", tools.client.queries[-1])
+
+    def test_plan_history_reads_qjjh_plan_records(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_major", [MAJOR]),
+                    (
+                        "FROM edu_qjjh_plan",
+                        [
+                            {
+                                "year": "2025",
+                                "province_id": "33",
+                                "special_name": "计算机科学与技术",
+                                "academy_name": "计算机学院",
+                                "group_name": "物化组",
+                                "plan_count": "80",
+                                "subject_requirement_text": "物理,化学",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.plan_history("杭州电子科技大学", major_text="计科", province="浙江")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["records"][0]["plan_count"], "80")
+        self.assertIn("school_id = '10336'", tools.client.queries[-1])
+        self.assertIn("special_id = '080901'", tools.client.queries[-1])
+
+    def test_employment_summary_returns_school_level_scope(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    (
+                        "FROM edu_university_employment",
+                        [
+                            {
+                                "year": "2024",
+                                "employment_rate": "96.50",
+                                "further_study_rate": "35.20",
+                                "avg_salary": "8500.00",
+                                "employment_data": "{}",
+                                "top_employment_industries": '["IT"]',
+                                "top_employment_regions": '["浙江"]',
+                                "top_employers": "[]",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.employment_summary("杭州电子科技大学")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["records"][0]["year"], "2024")
+        self.assertIn("学校级就业", result["scope_notes"][0])
+
+    def test_source_trace_lookup_explains_registered_tool_sources(self):
+        tools = RetrievalTools(FakeClient([]))
+
+        result = tools.source_trace_lookup("rank_to_major_match")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("edu_school_admission_stats", result["data"]["source_tables"])
+        self.assertIn("历史录取", result["scope_notes"][0])
+
+    def test_transfer_policy_lookup_returns_third_party_policy_line(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    (
+                        "FROM rysxai_transfer_policies",
+                        [
+                            {
+                                "school_id": "10336",
+                                "school_name": "杭州电子科技大学",
+                                "source_name": "rysxai",
+                                "source_level": "C",
+                                "has_transfer_policy": "1",
+                                "change_profession": "学生可在规定时间申请转专业。",
+                                "change_profession_application_condition": "成绩合格。",
+                                "source_url": "https://example.com/policy",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.transfer_policy_lookup("杭州电子科技大学")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("学生可在规定时间", result["data"]["policy"]["change_profession"])
+        self.assertIn("第三方线索", result["scope_notes"][0])
+
+    def test_fee_and_campus_lookup_returns_fee_items_and_marks_campus_gap(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_major", [MAJOR]),
+                    (
+                        "FROM edu_university_plan_special ps",
+                        [
+                            {
+                                "year": "2025",
+                                "province_id": "33",
+                                "group_id": "001",
+                                "group_name": "物化组",
+                                "elective_info": "物理,化学",
+                                "special_name": "计算机科学与技术",
+                                "plan_count": "80",
+                                "tuition_year": "4",
+                                "tuition_fee": "6900",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.fee_and_campus_lookup("杭州电子科技大学", major_text="计科", province="浙江", year=2025)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["data"]["fee_items"][0]["tuition_fee"], "6900")
+        self.assertIn("校区信息", result["data_gaps"])
+
+    def test_specialty_group_risk_uses_group_composition_without_streaming_ratio(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    (
+                        "FROM edu_college_specialty_group g",
+                        [
+                            {
+                                "year": "2025",
+                                "province": "33",
+                                "group_code": "001",
+                                "group_name": "物化组",
+                                "group_type": "综合",
+                                "group_plan_count": "120",
+                                "allow_adjustment": "1",
+                                "special_code": "080901",
+                                "special_name": "计算机科学与技术",
+                                "major_plan_count": "80",
+                            },
+                            {
+                                "year": "2025",
+                                "province": "33",
+                                "group_code": "001",
+                                "group_name": "物化组",
+                                "group_type": "综合",
+                                "group_plan_count": "120",
+                                "allow_adjustment": "1",
+                                "special_code": "081001",
+                                "special_name": "土木工程",
+                                "major_plan_count": "40",
+                            },
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.specialty_group_risk(
+            school_text="杭州电子科技大学",
+            province="浙江",
+            subject_type="综合",
+            year=2025,
+            group_code="001",
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["risk"]["major_count"], 2)
+        self.assertIn("不等于真实分流比例", result["scope_notes"][0])
 
     def test_major_market_reference_uses_ingested_market_tables(self):
         tools = RetrievalTools(

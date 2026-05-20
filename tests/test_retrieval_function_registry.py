@@ -18,6 +18,15 @@ EXPECTED_FUNCTION_NAMES = {
     "score_to_rank",
     "rank_to_school_match",
     "rank_to_major_match",
+    "specialty_group_lookup",
+    "subject_requirement_lookup",
+    "school_department_major_list",
+    "plan_history",
+    "employment_summary",
+    "source_trace_lookup",
+    "transfer_policy_lookup",
+    "fee_and_campus_lookup",
+    "specialty_group_risk",
     "admission_history",
     "major_market_reference",
     "civil_service_role_search",
@@ -168,17 +177,30 @@ class RetrievalFunctionRegistryTests(unittest.TestCase):
             self.assertEqual(schema["function"]["parameters"]["type"], "object")
             self.assertFalse(schema["function"]["parameters"]["additionalProperties"])
 
+    def test_source_trace_registry_covers_every_registered_function(self):
+        from scripts.retrieval_tools import _SOURCE_TRACE_REGISTRY
+
+        self.assertEqual(set(_SOURCE_TRACE_REGISTRY), EXPECTED_FUNCTION_NAMES)
+        for tool_name, trace in _SOURCE_TRACE_REGISTRY.items():
+            self.assertIn("source_tables", trace, tool_name)
+            self.assertIn("scope_notes", trace, tool_name)
+            self.assertIn("reliability", trace, tool_name)
+
     def test_schema_documents_required_slots_for_high_risk_tools(self):
         from scripts.retrieval_function_registry import schema_for_tool
 
         score_schema = schema_for_tool("score_to_rank")["function"]["parameters"]
         match_schema = schema_for_tool("rank_to_school_match")["function"]["parameters"]
         major_match_schema = schema_for_tool("rank_to_major_match")["function"]["parameters"]
+        group_schema = schema_for_tool("specialty_group_lookup")["function"]["parameters"]
+        transfer_schema = schema_for_tool("transfer_policy_lookup")["function"]["parameters"]
         profile_schema = schema_for_tool("school_major_profile")["function"]["parameters"]
 
         self.assertEqual(score_schema["required"], ["province", "subject_type", "score"])
         self.assertEqual(match_schema["required"], ["province"])
         self.assertEqual(major_match_schema["required"], ["province", "major_text"])
+        self.assertEqual(group_schema["required"], ["school_text"])
+        self.assertEqual(transfer_schema["required"], ["school_text"])
         self.assertEqual(profile_schema["required"], ["school_text", "major_text"])
 
     def test_dispatcher_calls_named_tool_with_arguments(self):

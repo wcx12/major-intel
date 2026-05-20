@@ -69,7 +69,7 @@
 
 ### 当前已落地能力快照
 
-截至 2026-05-20，当前已经落地 14 个可调用检索入口：
+截至 2026-05-20，当前已经落地 23 个可调用检索入口：
 
 ```text
 school_lookup
@@ -82,6 +82,15 @@ school_major_profile
 score_to_rank
 rank_to_school_match
 rank_to_major_match
+specialty_group_lookup
+subject_requirement_lookup
+school_department_major_list
+plan_history
+employment_summary
+source_trace_lookup
+transfer_policy_lookup
+fee_and_campus_lookup
+specialty_group_risk
 admission_history
 major_market_reference
 civil_service_role_search
@@ -98,6 +107,8 @@ data_gap_detection
 - 能查询历年录取分和位次。
 - 能按分数或位次返回学校层面的冲/稳/保参考，并在请求年份缺数时标记历史年份回退。
 - 能按分数或位次 + 专业偏好返回学校-专业行层面的冲/稳/保参考，并保留专业大类、试验班、方向等变体提示。
+- 能查询招生专业组、组内专业、选科要求，并基于组内构成做调剂风险初筛；明确不等于真实分流比例。
+- 能查询学校院系专业关系、招生计划历史、学校级就业/升学摘要、转专业政策线索、学费线索和来源可信度说明。
 - 能读取已接入的专业市场样本和考公岗位样本。
 - 能识别当前问题还缺哪些本地数据，避免 agent 编造。
 
@@ -123,28 +134,27 @@ data_gap_detection
 | 1 | `data_gap_detection` | P0 | 识别缺失数据 | A | 已完成 | 返回当前问题缺少哪些本地数据，不编造 |
 | 2 | `rank_to_school_match` | P0 | 按位次推荐学校 | A/B | 已完成 | 支持输入位次或分数，输出冲/稳/保学校桶；请求年份缺数时明确标记历史参考 |
 | 2 | `rank_to_major_match` | P0 | 按位次和专业推荐学校专业 | A/B | 已完成 | 支持输入位次或分数 + 专业偏好，输出学校-专业行冲/稳/保桶 |
-| 2 | `specialty_group_lookup` | P0 | 查专业组和组内专业 | A | 待制作 | 已有部分专业组查询逻辑，尚未独立成工具 |
-| 2 | `plan_history` | P1 | 查招生计划变化 | A | 待制作 | 需要先审计招生计划字段 |
-| 2 | `subject_requirement_lookup` | P1 | 查选科要求 | A/B | 待制作 | 可从专业组/招生计划中抽取 |
-| 2 | `school_department_major_list` | P1 | 查院系和院系下专业 | A | 待制作 | 需要确认院系字段覆盖情况 |
-| 3 | `specialty_group_risk` | P0 | 专业组调剂风险初筛 | B | 待制作 | 依赖专业组构成和冷热门判断规则 |
+| 2 | `specialty_group_lookup` | P0 | 查专业组和组内专业 | A | 已完成 | 独立工具已落地；按学校、专业、省份、科类、年份、专业组代码筛选 |
+| 2 | `plan_history` | P1 | 查招生计划变化 | A | 已完成 | 读取 `edu_qjjh_plan`；计划数不等于实际录取人数 |
+| 2 | `subject_requirement_lookup` | P1 | 查选科要求 | A/B | 已完成 | 从专业组样本抽取去重选科要求，并保留原始记录 |
+| 2 | `school_department_major_list` | P1 | 查院系和院系下专业 | A | 已完成 | 读取院系与院系专业表；不等于某省招生计划 |
+| 3 | `specialty_group_risk` | P0 | 专业组调剂风险初筛 | B | 已完成 | 基于组内专业数量、计划数和目标专业占比初筛；真实分流比例仍列缺口 |
 | 3 | `comparison_query` | P1 | 学校/专业/方案对比 | B | 待制作 | 需要复用已有画像工具组合 |
-| 3 | `employment_summary` | P1 | 学校级就业升学摘要 | B | 待制作 | 学校级摘要已有，尚未独立成正式工具 |
+| 3 | `employment_summary` | P1 | 学校级就业升学摘要 | B | 已完成 | 学校级摘要已独立成工具；不能代表校专业级就业 |
 | 3 | `major_market_reference` | P1 | 专业通用市场参考 | B | 提前完成 | 已接入 rysxai 市场样本表；明确不是校专业就业 |
-| 3 | `source_trace_lookup` | P1 | 解释数据来源和可信度 | B/C | 待制作 | 需要统一 source/evidence 元数据 |
-| 4 | `transfer_policy_lookup` | P1 | 查转专业政策 | C | 部分完成 | `rysxai_transfer_policies` 入库支持已完成；正式检索工具待做 |
+| 3 | `source_trace_lookup` | P1 | 解释数据来源和可信度 | B/C | 已完成 | 已登记 23 个正式工具的数据表、口径和可信度等级 |
+| 4 | `transfer_policy_lookup` | P1 | 查转专业政策 | C | 已完成 | 已接入 `rysxai_transfer_policies`；第三方线索必须官方复核 |
 | 4 | `major_streaming_policy_lookup` | P1 | 查大类分流政策和比例 | C | 待制作 | 需要新增或确认分流比例数据源 |
 | 4 | `civil_service_role_search` | P1 | 专业到考公岗位样本检索 | C | 提前完成 | 已接入考公岗位样本；仅表示岗位文本命中，不等于最终可报 |
 | 4 | `civil_service_mapping` | P1 | 专业到考公岗位映射与可报判定 | C | 部分完成 | 样本检索已完成；正式映射、人工确认和可报判定未完成 |
-| 4 | `fee_and_campus_lookup` | P2 | 学费、校区、住宿等 | B/C | 待制作 | 需要审计字段和来源 |
+| 4 | `fee_and_campus_lookup` | P2 | 学费、校区、住宿等 | B/C | 已完成 | 可返回学费线索；当前库无稳定校区字段时返回 `校区信息` 缺口 |
 | 4 | `policy_rule_lookup` | P2 | 招生政策、批次规则 | C | 待制作 | 需要联网/人工确认后入库 |
 
 未完成工具摘要：
 
-- 第二阶段还缺 `specialty_group_lookup`、`plan_history`、`subject_requirement_lookup`、`school_department_major_list`。
-- 第三阶段还缺 `specialty_group_risk`、`comparison_query`、`employment_summary`、`source_trace_lookup`。
-- 第四阶段还缺 `major_streaming_policy_lookup`、`fee_and_campus_lookup`、`policy_rule_lookup`。
-- `transfer_policy_lookup`、`civil_service_mapping` 不是从零开始，但还没有达到正式可调用工具标准。
+- 第三阶段还缺 `comparison_query`。
+- 第四阶段还缺 `major_streaming_policy_lookup`、`policy_rule_lookup`。
+- `civil_service_mapping` 不是从零开始，但还没有达到正式可调用工具标准；当前只有 `civil_service_role_search` 样本检索。
 
 ## 分阶段实现路线
 

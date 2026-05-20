@@ -70,11 +70,13 @@
 | `source_trace_lookup` | 查证据来源、官网链接、报告来源 | B/C |
 | `civil_service_mapping` | 专业到考公岗位映射 | C |
 | `transfer_policy_lookup` | 转专业政策 | C |
+| `fee_and_campus_lookup` | 学费线索、校区字段缺口 | B/C |
 | `major_streaming_policy_lookup` | 大类分流政策和比例 | C |
+| `policy_rule_lookup` | 招生政策、批次规则、特殊限制 | C |
 
 ## 当前实现状态
 
-截至 2026-05-20，已有 14 个底层能力进入正式 function call 注册表，可以由后续 agent 自动调用：
+截至 2026-05-20，已有 23 个底层能力进入正式 function call 注册表，可以由后续 agent 自动调用：
 
 ```text
 school_lookup
@@ -87,6 +89,15 @@ school_major_profile
 score_to_rank
 rank_to_school_match
 rank_to_major_match
+specialty_group_lookup
+subject_requirement_lookup
+school_department_major_list
+plan_history
+employment_summary
+source_trace_lookup
+transfer_policy_lookup
+fee_and_campus_lookup
+specialty_group_risk
 admission_history
 major_market_reference
 civil_service_role_search
@@ -97,8 +108,10 @@ data_gap_detection
 
 - `rank_to_major_match` 已完成第一版，可以支撑“某省某科类某分数/位次想学某专业，能看哪些学校专业”的问题。
 - `major_market_reference` 和 `civil_service_role_search` 属于提前完成能力，能读取已接入的市场样本和考公岗位样本，但仍必须保留数据口径提示。
-- `transfer_policy_lookup` 与 `civil_service_mapping` 处于部分完成状态：底层数据或样本已经接入，但正式检索工具、人工确认和可报判定还没有完成。
-- `specialty_group_lookup`、`subject_requirement_lookup`、`specialty_group_risk` 仍是下一阶段最关键的待制作工具，因为它们直接影响专业组、调剂和选科类问题。
+- `specialty_group_lookup`、`subject_requirement_lookup`、`school_department_major_list`、`plan_history` 已经补齐，能覆盖专业组、选科、院系专业和招生计划类问题。
+- `employment_summary`、`transfer_policy_lookup`、`fee_and_campus_lookup`、`specialty_group_risk` 已经进入正式工具层，但仍会在校专业级就业、官方转专业复核、稳定校区字段、真实分流比例处标注缺口。
+- `civil_service_mapping` 仍处于部分完成状态：当前只有 `civil_service_role_search` 样本检索，正式可报判定、人工确认和政策解释还没有完成。
+- 下一批主要剩 `comparison_query`、`major_streaming_policy_lookup`、`policy_rule_lookup`，以及把这些工具接入自然语言 agent 的自动选择流程。
 
 ## 考生问题总分类
 

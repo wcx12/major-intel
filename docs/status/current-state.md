@@ -6,7 +6,7 @@
 
 ### 1. 本地检索与 function call 层
 
-当前已落地 14 个正式可调用检索入口：
+当前已落地 23 个正式可调用检索入口：
 
 ```text
 school_lookup
@@ -19,6 +19,15 @@ school_major_profile
 score_to_rank
 rank_to_school_match
 rank_to_major_match
+specialty_group_lookup
+subject_requirement_lookup
+school_department_major_list
+plan_history
+employment_summary
+source_trace_lookup
+transfer_policy_lookup
+fee_and_campus_lookup
+specialty_group_risk
 admission_history
 major_market_reference
 civil_service_role_search
@@ -40,6 +49,8 @@ data_gap_detection
 - `major_lookup` 的常用简称已经从代码内置迁入数据库确认别名表 `entity_aliases`，例如“计科”优先命中“计算机科学与技术”；短简称不再直接走危险模糊匹配。
 - `rank_to_school_match` 已能按分数或位次返回学校层面的冲/稳/保参考。
 - `rank_to_major_match` 已能按分数或位次 + 专业偏好返回学校-专业行层面的冲/稳/保参考。
+- 本轮新增 9 个正式工具：专业组查询、选科要求、院系专业、招生计划、学校级就业摘要、来源追踪、转专业政策、学费线索/校区缺口、专业组风险初筛。
+- 招生计划/学费等混合来源表已经改成“专业代码精确 + 专业名精确 + 专业名包含”的匹配，能命中带校区、中外合作、学费说明等后缀的专业名。
 
 ### 1.1 工具完成状态
 
@@ -56,6 +67,15 @@ school_major_profile
 score_to_rank
 rank_to_school_match
 rank_to_major_match
+specialty_group_lookup
+subject_requirement_lookup
+school_department_major_list
+plan_history
+employment_summary
+source_trace_lookup
+transfer_policy_lookup
+fee_and_campus_lookup
+specialty_group_risk
 admission_history
 data_gap_detection
 ```
@@ -70,31 +90,22 @@ civil_service_role_search
 部分完成，但还不是正式结论型工具：
 
 ```text
-transfer_policy_lookup
 civil_service_mapping
 ```
 
 仍待制作：
 
 ```text
-specialty_group_lookup
-plan_history
-subject_requirement_lookup
-school_department_major_list
-specialty_group_risk
 comparison_query
-employment_summary
-source_trace_lookup
 major_streaming_policy_lookup
-fee_and_campus_lookup
 policy_rule_lookup
 ```
 
 当前验证：
 
-- 单元测试：`python -m unittest discover -s tests` 最近一次为 79 个测试通过。
-- 烟测矩阵：覆盖 14 个工具入口。
-- 真实库抽样：`major_lookup`、`rank_to_school_match`、`rank_to_major_match` 已验证过可跑通。
+- 单元测试：`python -m unittest discover -s tests` 最近一次为 92 个测试通过。
+- 烟测矩阵：覆盖 23 个工具入口；完整真实库结构烟测 290/290 通过。新增 9 个工具的真实库 strict-target 烟测为 27/27 通过，质量预期 0 miss。
+- 真实库抽样：`specialty_group_lookup`、`fee_and_campus_lookup`、`transfer_policy_lookup`、`rank_to_major_match` 等已验证可跑通。
 
 ### 2. rysxai 专业市场数据
 
@@ -159,8 +170,8 @@ policy_rule_lookup
 
 ## 下一步建议
 
-1. 先实现 `specialty_group_lookup`：查询专业组、组内专业、选科要求、计划数和调剂口径。
-2. 再实现 `subject_requirement_lookup`：把选科要求从专业组/招生计划中抽成独立工具。
-3. 再实现 `specialty_group_risk`：基于组内专业构成做调剂风险初筛，但不声称真实分流比例。
-4. 然后实现 `transfer_policy_lookup`：把已入库的 rysxai 转专业线索接入正式检索工具，并明确第三方线索口径。
-5. 最后审查未提交的 DeepSeek agent 草稿，再决定是否纳入主干自然语言总入口。
+1. 实现 `comparison_query`：复用已有画像、录取、专业组和就业工具，先做结构化对比结果。
+2. 设计 `major_streaming_policy_lookup` 的数据入口：真实分流比例和冷门专业比例目前仍缺可靠来源。
+3. 将 `civil_service_role_search` 升级为 `civil_service_mapping`：区分“文本命中样本”和“正式可报判定”。
+4. 设计 `policy_rule_lookup`：招生章程、批次规则、特殊限制需要联网 agent + 人工确认后入库。
+5. 审查未提交的 DeepSeek agent 草稿，再决定是否纳入主干自然语言总入口。

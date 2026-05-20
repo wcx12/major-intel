@@ -312,6 +312,123 @@
       ]
     },
     {
+      "id_prefix": "specialty_group_lookup",
+      "tool": "specialty_group_lookup",
+      "category": "specialty_group",
+      "target_status": "ok",
+      "allowed_statuses": ["ok", "not_found"],
+      "expected_data_keys": ["school", "groups"],
+      "args_list": [
+        {"id_suffix": "hdu_cs_gd_2024", "args": {"school": "杭州电子科技大学", "major": "计科", "province": "广东", "subject_type": "物理", "year": 2024, "limit": 5}},
+        {"id_suffix": "bjtu_software_gd_2024", "args": {"school": "北京交通大学", "major": "软件工程", "province": "广东", "subject_type": "物理", "year": 2024, "limit": 5}},
+        {"id_suffix": "unknown_school", "args": {"school": "不存在大学测试样本999", "province": "广东", "year": 2024, "limit": 5}, "target_status": "not_found"}
+      ]
+    },
+    {
+      "id_prefix": "subject_requirement_lookup",
+      "tool": "subject_requirement_lookup",
+      "category": "specialty_group",
+      "target_status": "ok",
+      "allowed_statuses": ["ok", "not_found"],
+      "expected_data_keys": ["major", "requirements", "records"],
+      "args_list": [
+        {"id_suffix": "cs_gd_2024", "args": {"major": "计科", "province": "广东", "subject_type": "物理", "year": 2024, "limit": 10}},
+        {"id_suffix": "software_gd_2024", "args": {"major": "软件工程", "province": "广东", "subject_type": "物理", "year": 2024, "limit": 10}},
+        {"id_suffix": "unknown_major", "args": {"major": "星际航道规划与管理", "province": "广东", "year": 2024, "limit": 5}, "target_status": "not_found"}
+      ]
+    },
+    {
+      "id_prefix": "school_department_major_list",
+      "tool": "school_department_major_list",
+      "category": "relationship_list",
+      "target_status": "ok",
+      "allowed_statuses": ["ok", "not_found"],
+      "expected_data_keys": ["school", "departments"],
+      "args_list": [
+        {"id_suffix": "hdu_all", "args": {"school": "杭州电子科技大学", "limit": 20}},
+        {"id_suffix": "hdu_cs_dept", "args": {"school": "杭州电子科技大学", "department": "计算机", "limit": 20}},
+        {"id_suffix": "unknown_school", "args": {"school": "不存在大学测试样本999", "limit": 5}, "target_status": "not_found"}
+      ]
+    },
+    {
+      "id_prefix": "plan_history",
+      "tool": "plan_history",
+      "category": "admission",
+      "target_status": "ok",
+      "allowed_statuses": ["ok", "not_found"],
+      "expected_data_keys": ["school", "records"],
+      "args_list": [
+        {"id_suffix": "muc_software_gd", "args": {"school": "中央民族大学", "major": "软件工程", "province": "广东", "years": [2024, 2025], "limit": 20}},
+        {"id_suffix": "zju_cs_gd", "args": {"school": "浙江大学", "major": "计算机科学与技术", "province": "广东", "years": [2024, 2025], "limit": 20}},
+        {"id_suffix": "unknown_school", "args": {"school": "不存在大学测试样本999", "province": "广东", "limit": 5}, "target_status": "not_found"}
+      ]
+    },
+    {
+      "id_prefix": "employment_summary",
+      "tool": "employment_summary",
+      "category": "profile",
+      "target_status": "ok",
+      "allowed_statuses": ["ok", "not_found"],
+      "expected_data_keys": ["school", "records"],
+      "args_list": [
+        {"id_suffix": "hdu", "args": {"school": "杭州电子科技大学", "limit": 3}},
+        {"id_suffix": "zju", "args": {"school": "浙江大学", "limit": 3}},
+        {"id_suffix": "unknown_school", "args": {"school": "不存在大学测试样本999", "limit": 3}, "target_status": "not_found"}
+      ]
+    },
+    {
+      "id_prefix": "source_trace_lookup",
+      "tool": "source_trace_lookup",
+      "category": "source_trace",
+      "target_status": "ok",
+      "allowed_statuses": ["ok", "not_found"],
+      "expected_data_keys": ["source_tables"],
+      "args_list": [
+        {"id_suffix": "rank_to_major", "args": {"tool_name": "rank_to_major_match"}},
+        {"id_suffix": "specialty_group", "args": {"tool_name": "specialty_group_lookup"}},
+        {"id_suffix": "unknown_tool", "args": {"tool_name": "unknown_tool_for_smoke"}, "target_status": "not_found"}
+      ]
+    },
+    {
+      "id_prefix": "transfer_policy_lookup",
+      "tool": "transfer_policy_lookup",
+      "category": "policy",
+      "target_status": "ok",
+      "allowed_statuses": ["ok", "partial", "not_found"],
+      "expected_data_keys": ["school", "policy"],
+      "args_list": [
+        {"id_suffix": "hdu", "args": {"school": "杭州电子科技大学"}},
+        {"id_suffix": "zju", "args": {"school": "浙江大学"}},
+        {"id_suffix": "unknown_school", "args": {"school": "不存在大学测试样本999"}, "target_status": "not_found"}
+      ]
+    },
+    {
+      "id_prefix": "fee_and_campus_lookup",
+      "tool": "fee_and_campus_lookup",
+      "category": "policy",
+      "target_status": "partial",
+      "allowed_statuses": ["partial", "not_found"],
+      "expected_data_keys": ["school", "fee_items", "campus_items"],
+      "args_list": [
+        {"id_suffix": "hdu_cs_gd", "args": {"school": "杭州电子科技大学", "major": "计科", "province": "广东", "year": 2025, "limit": 10}},
+        {"id_suffix": "zju_cs_gd", "args": {"school": "浙江大学", "major": "计算机科学与技术", "province": "广东", "year": 2025, "limit": 10}},
+        {"id_suffix": "unknown_school", "args": {"school": "不存在大学测试样本999", "province": "广东", "year": 2025, "limit": 5}, "target_status": "not_found"}
+      ]
+    },
+    {
+      "id_prefix": "specialty_group_risk",
+      "tool": "specialty_group_risk",
+      "category": "specialty_group",
+      "target_status": "ok",
+      "allowed_statuses": ["ok", "not_found"],
+      "expected_data_keys": ["risk", "groups"],
+      "args_list": [
+        {"id_suffix": "hdu_cs_gd_2024", "args": {"school": "杭州电子科技大学", "major": "计科", "province": "广东", "subject_type": "物理", "year": 2024}},
+        {"id_suffix": "bjtu_software_gd_2024", "args": {"school": "北京交通大学", "major": "软件工程", "province": "广东", "subject_type": "物理", "year": 2024}},
+        {"id_suffix": "unknown_school", "args": {"school": "不存在大学测试样本999", "province": "广东", "year": 2024}, "target_status": "not_found"}
+      ]
+    },
+    {
       "id_prefix": "admission_history",
       "tool": "admission_history",
       "category": "admission",

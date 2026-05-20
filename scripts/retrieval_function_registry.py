@@ -209,6 +209,114 @@ _FUNCTION_SCHEMAS: dict[str, dict[str, Any]] = {
             ["province", "major_text"],
         ),
     ),
+    "specialty_group_lookup": _function_schema(
+        "specialty_group_lookup",
+        "查询某学校在指定省份/科类/年份下的专业组，并返回组内全部专业、计划数、选科要求和是否允许调剂。专业组不等于真实分流结果。",
+        _object_schema(
+            {
+                "school_text": _string("学校名称、简称或代码。"),
+                "major_text": _string("可选，专业名称、简称或代码；提供后只找包含该专业的专业组。"),
+                "province": _string("可选，招生省份名称或 province_id。"),
+                "subject_type": _string("可选，科类，例如 物理、历史、综合。"),
+                "year": _integer("可选，招生年份。", minimum=2000, maximum=2100),
+                "group_code": _string("可选，专业组代码。"),
+                "limit": _LIMIT,
+            },
+            ["school_text"],
+        ),
+    ),
+    "subject_requirement_lookup": _function_schema(
+        "subject_requirement_lookup",
+        "查询某专业在本地专业组样本中的选科要求，可按学校、省份、科类、年份过滤。选科要求必须结合具体年份和省份理解。",
+        _object_schema(
+            {
+                "major_text": _string("专业名称、简称或代码。"),
+                "school_text": _string("可选，学校名称、简称或代码。"),
+                "province": _string("可选，招生省份名称或 province_id。"),
+                "subject_type": _string("可选，科类，例如 物理、历史、综合。"),
+                "year": _integer("可选，招生年份。", minimum=2000, maximum=2100),
+                "limit": _LIMIT,
+            },
+            ["major_text"],
+        ),
+    ),
+    "school_department_major_list": _function_schema(
+        "school_department_major_list",
+        "查询学校院系和院系下专业关系。它是学校组织结构口径，不等于某省某年的招生计划。",
+        _object_schema(
+            {
+                "school_text": _string("学校名称、简称或代码。"),
+                "department_text": _string("可选，院系名称筛选词。"),
+                "major_text": _string("可选，专业名称、简称或代码。"),
+                "limit": _LIMIT,
+            },
+            ["school_text"],
+        ),
+    ),
+    "plan_history": _function_schema(
+        "plan_history",
+        "查询学校/专业在不同省份和年份的招生计划记录。计划数不等于实际录取人数。",
+        _object_schema(
+            {
+                "school_text": _string("学校名称、简称或代码。"),
+                "major_text": _string("可选，专业名称、简称或代码。"),
+                "province": _string("可选，招生省份名称或 province_id。"),
+                "years": _integer_array("可选，需要查询的招生年份列表。"),
+                "limit": _LIMIT,
+            },
+            ["school_text"],
+        ),
+    ),
+    "employment_summary": _function_schema(
+        "employment_summary",
+        "查询学校级就业和升学摘要。它不能回答某个专业的真实就业去向、薪资或升学率。",
+        _object_schema(
+            {
+                "school_text": _string("学校名称、简称或代码。"),
+                "limit": _integer("最多返回多少个年份。", minimum=1, maximum=20),
+            },
+            ["school_text"],
+        ),
+    ),
+    "source_trace_lookup": _function_schema(
+        "source_trace_lookup",
+        "解释检索工具使用的数据表、数据口径和可信等级，帮助 agent 在回答中说明来源边界。",
+        _object_schema({"tool_name": _string("可选，需要解释的工具名。")}, []),
+    ),
+    "transfer_policy_lookup": _function_schema(
+        "transfer_policy_lookup",
+        "查询已接入的转专业政策线索。当前主要来自第三方数据，必须提示回到学校官网或教务处文件复核。",
+        _object_schema({"school_text": _string("学校名称、简称或代码。")}, ["school_text"]),
+    ),
+    "fee_and_campus_lookup": _function_schema(
+        "fee_and_campus_lookup",
+        "查询招生计划中的学费线索，并明确当前库没有稳定校区字段，不能猜测就读校区。",
+        _object_schema(
+            {
+                "school_text": _string("学校名称、简称或代码。"),
+                "major_text": _string("可选，专业名称、简称或代码。"),
+                "province": _string("可选，招生省份名称或 province_id。"),
+                "year": _integer("可选，招生年份。", minimum=2000, maximum=2100),
+                "limit": _LIMIT,
+            },
+            ["school_text"],
+        ),
+    ),
+    "specialty_group_risk": _function_schema(
+        "specialty_group_risk",
+        "基于专业组构成、计划数和是否允许调剂做调剂风险初筛。不提供真实分流比例或最终调剂结果。",
+        _object_schema(
+            {
+                "school_text": _string("学校名称、简称或代码。"),
+                "province": _string("可选，招生省份名称或 province_id。"),
+                "subject_type": _string("可选，科类，例如 物理、历史、综合。"),
+                "year": _integer("可选，招生年份。", minimum=2000, maximum=2100),
+                "group_code": _string("可选，专业组代码。"),
+                "major_text": _string("可选，专业名称、简称或代码。"),
+            },
+            ["school_text"],
+        ),
+    ),
     "admission_history": _function_schema(
         "admission_history",
         "查询学校、专业、省份、科类、年份条件下的历史录取记录。历史录取不代表未来保证。",
