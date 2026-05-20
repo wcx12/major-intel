@@ -79,7 +79,7 @@
 | 1 | `score_to_rank` | P0 | 分数转位次 | A | 已完成 | 按省份、科类、年份转换位次区间 |
 | 1 | `admission_history` | P0 | 查历年录取分和位次 | A | 已完成 | 支持学校、专业、省份、科类、年份筛选 |
 | 1 | `data_gap_detection` | P0 | 识别缺失数据 | A | 已完成 | 返回当前问题缺少哪些本地数据，不编造 |
-| 2 | `rank_to_school_match` | P0 | 按位次推荐学校 | A/B | 待制作 | 下一步优先实现 |
+| 2 | `rank_to_school_match` | P0 | 按位次推荐学校 | A/B | 已完成 | 支持输入位次或分数，输出冲/稳/保学校桶；请求年份缺数时明确标记历史参考 |
 | 2 | `rank_to_major_match` | P0 | 按位次和专业推荐学校专业 | A/B | 待制作 | 在 `rank_to_school_match` 后实现 |
 | 2 | `specialty_group_lookup` | P0 | 查专业组和组内专业 | A | 待制作 | 已有部分专业组查询逻辑，尚未独立成工具 |
 | 2 | `plan_history` | P1 | 查招生计划变化 | A | 待制作 | 需要先审计招生计划字段 |
@@ -582,7 +582,15 @@ data_gap_queue
 
 ### `rank_to_school_match`
 
-输入省份、科类、位次、风险偏好，返回冲稳保学校列表。
+输入省份、科类、位次或分数，返回冲稳保学校列表。
+
+当前实现：
+
+- 直接输入位次时，用该位次匹配学校；只输入分数时，先调用 `score_to_rank` 取保守位次。
+- 查询 `edu_school_admission_stats` 的 `chong_rank`、`stable_rank`、`bao_rank`，映射为 `rush`、`stable`、`safe` 三个桶。
+- 请求年份缺少录取数据时，可以回退到最近历史年份，并在 `reference.history_fallback` 和 `warnings` 中明确说明。
+- 广东等历史记录缺少科类字段时，会把空科类作为谨慎历史参考纳入，并返回提示，不把它伪装成精确科类数据。
+- 结果只代表学校层面历史位次参考，不代表某个专业或专业组一定可录取。
 
 核心表：
 
@@ -817,11 +825,12 @@ data_gap_detection
 当前完成记录（2026-05-20）：
 
 - 第一阶段 10 个 P0 工具已经全部实现。
+- 第二阶段 `rank_to_school_match` 已完成第一版，可按位次或分数返回冲/稳/保学校桶，并标记历史年份回退。
 - `major_market_reference` 和 `civil_service_role_search` 已经提前实现，用于读取已经接入的市场样本和考公岗位样本。
 - 已完成 agent function schema 注册层：`scripts/retrieval_function_registry.py`。
 - 已完成本地批量烟测脚本：`scripts/run_retrieval_smoke_cases.py`。
-- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 62 个测试通过。
-- 当前真实库抽样烟测覆盖 12 个工具入口；`school_major_profile` 在缺少校专业级证据时会按预期返回 `partial`。
+- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 66 个测试通过。
+- 当前烟测用例矩阵覆盖 13 个工具入口；本轮真实库抽样验证 `rank_to_school_match` 3 条样本通过。
 
 第一阶段完成时应满足：
 

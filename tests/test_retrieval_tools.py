@@ -182,6 +182,156 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(result["data"]["rank_range"]["lowest_rank"], 45200)
         self.assertIn("位次优先于分数", result["scope_notes"][0])
 
+    def test_rank_to_school_match_requires_rank_or_score(self):
+        tools = RetrievalTools(FakeClient([]))
+
+        result = tools.rank_to_school_match(province="浙江", subject_type="综合")
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["rank_or_score"])
+
+    def test_rank_to_school_match_uses_score_rank_and_latest_available_history(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    (
+                        "FROM edu_score_rank",
+                        [
+                            {
+                                "province_id": "44",
+                                "year": "2025",
+                                "subject_type": "物理",
+                                "score": "580",
+                                "same_count": "1035",
+                                "highest_rank": "43758",
+                                "lowest_rank": "44792",
+                            }
+                        ],
+                    ),
+                    (
+                        "FROM edu_school_admission_stats a",
+                        [
+                            {
+                                "province_name": "广东",
+                                "school_id": "10001",
+                                "school_name": "冲刺大学",
+                                "school_province_name": "北京",
+                                "city_name": "北京市",
+                                "is985": "1",
+                                "is211": "1",
+                                "is_dual_class": "1",
+                                "subject_type": "NULL",
+                                "year": "2024",
+                                "stable_score": "560",
+                                "stable_rank": "43000",
+                                "chong_score": "555",
+                                "chong_rank": "56000",
+                                "bao_score": "565",
+                                "bao_rank": "30000",
+                                "batch": "NULL",
+                                "representative_major_name": "",
+                                "row_scope": "school_level",
+                            },
+                            {
+                                "province_name": "广东",
+                                "school_id": "10002",
+                                "school_name": "稳妥大学",
+                                "school_province_name": "浙江",
+                                "city_name": "杭州市",
+                                "is985": "0",
+                                "is211": "0",
+                                "is_dual_class": "0",
+                                "subject_type": "",
+                                "year": "2024",
+                                "stable_score": "552",
+                                "stable_rank": "46000",
+                                "chong_score": "547",
+                                "chong_rank": "59000",
+                                "bao_score": "557",
+                                "bao_rank": "33000",
+                                "batch": "本科批",
+                                "representative_major_name": "",
+                                "row_scope": "school_level",
+                            },
+                            {
+                                "province_name": "广东",
+                                "school_id": "10003",
+                                "school_name": "保底大学",
+                                "school_province_name": "江苏",
+                                "city_name": "南京市",
+                                "is985": "0",
+                                "is211": "1",
+                                "is_dual_class": "1",
+                                "subject_type": "",
+                                "year": "2024",
+                                "stable_score": "520",
+                                "stable_rank": "70000",
+                                "chong_score": "515",
+                                "chong_rank": "91000",
+                                "bao_score": "525",
+                                "bao_rank": "50000",
+                                "batch": "本科批",
+                                "representative_major_name": "",
+                                "row_scope": "school_level",
+                            },
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.rank_to_school_match(
+            province="广东",
+            subject_type="物理",
+            score=580,
+            year=2025,
+            limit=10,
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["applicant"]["rank"], 44792)
+        self.assertEqual(result["data"]["reference"]["requested_year"], 2025)
+        self.assertEqual(result["data"]["reference"]["reference_years"], [2024])
+        self.assertTrue(result["data"]["reference"]["history_fallback"])
+        self.assertEqual(result["data"]["reference"]["subject_unknown_count"], 3)
+        self.assertEqual(result["data"]["buckets"]["rush"][0]["school_name"], "冲刺大学")
+        self.assertIsNone(result["data"]["buckets"]["rush"][0]["subject_type"])
+        self.assertIsNone(result["data"]["buckets"]["rush"][0]["batch"])
+        self.assertEqual(result["data"]["buckets"]["stable"][0]["school_name"], "稳妥大学")
+        self.assertEqual(result["data"]["buckets"]["safe"][0]["school_name"], "保底大学")
+        self.assertIn("a.year <= 2025", tools.client.queries[-1])
+        self.assertIn("u.code = CAST(a.school_id AS CHAR)", tools.client.queries[-1])
+        self.assertIn("u.name = a.school_name", tools.client.queries[-1])
+        self.assertIn("edu_school_admission_stats", result["source_tables"])
+
+    def test_rank_to_school_match_returns_not_found_when_history_missing(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    (
+                        "FROM edu_score_rank",
+                        [
+                            {
+                                "province_id": "33",
+                                "year": "2025",
+                                "subject_type": "综合",
+                                "score": "600",
+                                "same_count": "1000",
+                                "highest_rank": "51000",
+                                "lowest_rank": "52000",
+                            }
+                        ],
+                    ),
+                    ("FROM edu_school_admission_stats a", []),
+                ]
+            )
+        )
+
+        result = tools.rank_to_school_match(province="浙江", subject_type="综合", score=600, year=2025)
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertIn("本地库未命中", result["warnings"][0])
+
     def test_major_market_reference_uses_ingested_market_tables(self):
         tools = RetrievalTools(
             FakeClient(

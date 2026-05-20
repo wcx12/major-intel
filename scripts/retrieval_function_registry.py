@@ -169,6 +169,27 @@ _FUNCTION_SCHEMAS: dict[str, dict[str, Any]] = {
             ["province", "subject_type", "score"],
         ),
     ),
+    "rank_to_school_match": _function_schema(
+        "rank_to_school_match",
+        "按考生省份、科类、分数或位次，使用本地历年录取位次推荐冲稳保学校；如果请求年份缺少录取数据，会明确标记为历史参考。",
+        _object_schema(
+            {
+                "province": _string("考生所在省份名称或 province_id。"),
+                "subject_type": _string("可选，科类，例如 物理、历史、综合；用分数推位次时必须提供。"),
+                "score": _number("可选，高考分数；未直接提供位次时，工具会先调用 score_to_rank 得到保守位次。"),
+                "rank": _integer("可选，考生位次；提供后会直接用位次匹配学校。"),
+                "year": _integer("可选，期望参考的录取年份；本地库没有当年录取时会回退到最近历史年份。", minimum=2000, maximum=2100),
+                "reference_years": _integer_array("可选，限定只使用这些历史录取年份。"),
+                "preferred_regions": _string_array("可选，只看这些学校所在地省份，例如 浙江、江苏、广东。"),
+                "school_level_filter": _string("可选，学校层次或类型粗筛，例如 211、双一流、本科。"),
+                "limit": _LIMIT,
+            },
+            # rank 和 score 是业务二选一关系，JSON schema 的 required 不适合
+            # 表达这种约束；统一由工具层返回 needs_clarification，方便 agent
+            # 获得同样格式的缺槽提示。
+            ["province"],
+        ),
+    ),
     "admission_history": _function_schema(
         "admission_history",
         "查询学校、专业、省份、科类、年份条件下的历史录取记录。历史录取不代表未来保证。",

@@ -163,6 +163,7 @@ class RetrievalSmokeRunnerTests(unittest.TestCase):
                 "major_school_list",
                 "school_major_profile",
                 "score_to_rank",
+                "rank_to_school_match",
                 "admission_history",
                 "major_market_reference",
                 "civil_service_role_search",
