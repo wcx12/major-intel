@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import html
 import os
 import re
@@ -64,7 +63,6 @@ class MysqlCliClient:
             "--connect-timeout=8",
             "--default-character-set=utf8mb4",
             "--batch",
-            "--raw",
             "-D",
             self.config.database,
             "-e",
@@ -74,13 +72,13 @@ class MysqlCliClient:
             args,
             check=False,
             capture_output=True,
-            encoding="utf-8",
-            errors="replace",
             env=env,
         )
+        stdout = result.stdout.decode("utf-8", errors="replace")
+        stderr = result.stderr.decode("utf-8", errors="replace")
         if result.returncode != 0:
-            raise RuntimeError(result.stderr.strip() or "mysql query failed")
-        return _parse_mysql_tsv(result.stdout)
+            raise RuntimeError(stderr.strip() or "mysql query failed")
+        return _parse_mysql_tsv(stdout)
 
 
 def resolve_school_sql(text: str, limit: int = 5) -> str:
@@ -487,7 +485,15 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _parse_mysql_tsv(text: str) -> list[dict[str, str]]:
-    rows = list(csv.reader(text.splitlines(), delimiter="\t"))
+    # Use "\n" as the only physical row delimiter.  `str.splitlines()` would
+    # also split on bare "\r"; mysql can leave that character inside escaped
+    # Windows-style text fields, which would turn one database row into a bogus
+    # second result row.
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines = lines[:-1]
+    lines = [line[:-1] if line.endswith("\r") else line for line in lines]
+    rows = [line.split("\t") for line in lines]
     if not rows:
         return []
     headers = rows[0]
@@ -496,8 +502,38 @@ def _parse_mysql_tsv(text: str) -> list[dict[str, str]]:
         if not row:
             continue
         padded = row + [""] * max(0, len(headers) - len(row))
-        parsed.append(dict(zip(headers, padded[: len(headers)])))
+        parsed.append(
+            {
+                header: _decode_mysql_cli_cell(value)
+                for header, value in zip(headers, padded[: len(headers)])
+            }
+        )
     return parsed
+
+
+def _decode_mysql_cli_cell(value: str) -> str | None:
+    """Normalize one cell from `mysql --batch` output.
+
+    Without `--raw`, the mysql CLI keeps each database row on one physical line
+    by escaping control characters inside text fields.  That is exactly what we
+    want for TSV parsing: long descriptions may contain real newlines in MySQL,
+    but they should not be mistaken for a second result row.
+    """
+
+    if value == "NULL":
+        return None
+
+    replacements = {
+        "\\0": "\0",
+        "\\n": "\n",
+        "\\r": "\r",
+        "\\t": "\t",
+        "\\\\": "\\",
+    }
+    decoded = value
+    for escaped, actual in replacements.items():
+        decoded = decoded.replace(escaped, actual)
+    return decoded
 
 
 def _first_row(rows: list[dict[str, str]]) -> dict[str, str] | None:

@@ -67,10 +67,50 @@
 - `部分完成`：底层数据或样本检索已具备，但还没有达到正式结论型工具的口径。
 - `待制作`：尚未实现工具入口。
 
+### 当前已落地能力快照
+
+截至 2026-05-20，当前已经落地 13 个可调用检索入口：
+
+```text
+school_lookup
+major_lookup
+school_profile
+major_profile
+school_major_list
+major_school_list
+school_major_profile
+score_to_rank
+rank_to_school_match
+admission_history
+major_market_reference
+civil_service_role_search
+data_gap_detection
+```
+
+已经具备的核心能力：
+
+- 能解析学校实体，并返回规范学校与候选学校。
+- 能解析专业实体，并返回规范专业与候选专业；但简称/短词保护尚未完成，例如“计科”仍可能被 `LIKE` 误命中。
+- 能查询学校画像、专业画像、学校开设专业、专业开设学校。
+- 能查询学校 + 专业组合画像，并在校专业级就业、薪资、转专业、分流等数据不足时返回 `data_gaps`。
+- 能把同省、同科类、同年份分数转换为位次区间。
+- 能查询历年录取分和位次。
+- 能按分数或位次返回学校层面的冲/稳/保参考，并在请求年份缺数时标记历史年份回退。
+- 能读取已接入的专业市场样本和考公岗位样本。
+- 能识别当前问题还缺哪些本地数据，避免 agent 编造。
+
+已经完成的基础设施能力：
+
+- 已完成 `scripts/retrieval_tools.py` 工具层。
+- 已完成 `scripts/retrieval_function_registry.py` function schema 注册层和 dispatcher。
+- 已完成 `scripts/run_retrieval_smoke_cases.py` 本地批量烟测脚本。
+- 已修复 MySQL CLI 长文本换行解析问题，避免专业介绍字段里的换行被拆成假候选记录。
+- 已修复录取历史表和学校基础表的学校关联键问题：`edu_school_admission_stats.school_id` 应按 `edu_university.code + name` 关联，而不是按 `edu_university.school_id` 关联。
+
 | 阶段 | 工具名 | 优先级 | 主要解决的问题 | 当前数据支持 | 实现状态 | 落地说明 |
 |---|---|---:|---|---|---|---|
 | 1 | `school_lookup` | P0 | 解析学校实体 | A | 已完成 | 已接入 `retrieval_tools.py`、`retrieval_function_registry.py`、烟测用例 |
-| 1 | `major_lookup` | P0 | 解析专业实体 | A | 已完成 | 已接入工具层、function schema、烟测用例 |
+| 1 | `major_lookup` | P0 | 解析专业实体 | A | 已完成 | 已接入工具层、function schema、烟测用例；当前仍缺简称/短词保护 |
 | 1 | `school_profile` | P0 | 给学校查概况 | A | 已完成 | 返回学校基础、双一流、学科评估、学校级就业升学 |
 | 1 | `major_profile` | P0 | 给专业查概况 | A/B | 已完成 | 返回专业通用信息；明确不代表某校某专业就业 |
 | 1 | `school_major_list` | P0 | 给学校查专业列表 | A | 已完成 | 按学校代码查询开设专业；明确不等于某省招生计划 |
@@ -245,11 +285,17 @@ entity_alias_candidates
 
 用途：解析专业实体，返回最可能的专业和候选专业列表。
 
+当前实现状态：
+
+- 已可按专业全称、专业代码、`special_id` 和专业名模糊匹配查询 `edu_major`。
+- 已修复 MySQL CLI 长文本换行解析问题，专业介绍字段里的换行不会再被拆成假候选记录。
+- 尚未完成专业简称/别名层；“计科”“软工”“电信”等短词后续需要先走别名表或短词保护，不能长期依赖 `LIKE '%短词%'`。
+
 输入：
 
 ```json
 {
-  "major_text": "计科",
+  "major_text": "计算机科学与技术",
   "limit": 5
 }
 ```
@@ -272,6 +318,11 @@ entity_alias_candidates
 
 ```text
 edu_major
+```
+
+规划表：
+
+```text
 entity_aliases
 entity_alias_candidates
 ```
@@ -829,7 +880,8 @@ data_gap_detection
 - `major_market_reference` 和 `civil_service_role_search` 已经提前实现，用于读取已经接入的市场样本和考公岗位样本。
 - 已完成 agent function schema 注册层：`scripts/retrieval_function_registry.py`。
 - 已完成本地批量烟测脚本：`scripts/run_retrieval_smoke_cases.py`。
-- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 66 个测试通过。
+- 已修复 MySQL CLI 长文本换行解析问题，`major_lookup` 不会再把专业介绍里的“关键词/课程列表”拆成假候选记录。
+- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 68 个测试通过。
 - 当前烟测用例矩阵覆盖 13 个工具入口；本轮真实库抽样验证 `rank_to_school_match` 3 条样本通过。
 
 第一阶段完成时应满足：

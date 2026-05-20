@@ -1,6 +1,7 @@
 import unittest
 
 from scripts.local_retrieval_mvp import (
+    _parse_mysql_tsv,
     build_profile,
     build_school_major_sql,
     render_markdown_answer,
@@ -46,6 +47,16 @@ EMPLOYMENT = {
 
 
 class LocalRetrievalMvpTests(unittest.TestCase):
+    def test_parse_mysql_tsv_decodes_escaped_newlines_and_nulls(self):
+        rows = _parse_mysql_tsv("id\tdescription\toptional\n1\t第一行\\r\\n第二行\tNULL\n")
+
+        self.assertEqual(rows, [{"id": "1", "description": "第一行\r\n第二行", "optional": None}])
+
+    def test_parse_mysql_tsv_keeps_carriage_return_inside_text_field(self):
+        rows = _parse_mysql_tsv("id\tdescription\toptional\r\n1\t第一行\r\\n第二行\tNULL\r\n")
+
+        self.assertEqual(rows, [{"id": "1", "description": "第一行\r\n第二行", "optional": None}])
+
     def test_school_major_lookup_uses_university_code_and_name(self):
         sql = build_school_major_sql(SCHOOL, MAJOR)
 
