@@ -58,36 +58,44 @@
 | `source_tables` | 使用到的本地 MySQL 表 |
 | `warnings` | 风险提示，例如“历史录取不代表录取保证” |
 
-## 待制作 Function Call 工具总表
+## Function Call 工具总表与实现状态
 
-| 阶段 | 工具名 | 优先级 | 主要解决的问题 | 当前数据支持 |
-|---|---|---:|---|---|
-| 1 | `school_lookup` | P0 | 解析学校实体 | A |
-| 1 | `major_lookup` | P0 | 解析专业实体 | A |
-| 1 | `school_profile` | P0 | 给学校查概况 | A |
-| 1 | `major_profile` | P0 | 给专业查概况 | A/B |
-| 1 | `school_major_list` | P0 | 给学校查专业列表 | A |
-| 1 | `major_school_list` | P0 | 给专业查开设学校 | A |
-| 1 | `school_major_profile` | P0 | 学校 + 专业深度解读 | A/B，已有 MVP |
-| 1 | `score_to_rank` | P0 | 分数转位次 | A |
-| 1 | `admission_history` | P0 | 查历年录取分和位次 | A |
-| 1 | `data_gap_detection` | P0 | 识别缺失数据 | A |
-| 2 | `rank_to_school_match` | P0 | 按位次推荐学校 | A/B |
-| 2 | `rank_to_major_match` | P0 | 按位次和专业推荐学校专业 | A/B |
-| 2 | `specialty_group_lookup` | P0 | 查专业组和组内专业 | A |
-| 2 | `plan_history` | P1 | 查招生计划变化 | A |
-| 2 | `subject_requirement_lookup` | P1 | 查选科要求 | A/B |
-| 2 | `school_department_major_list` | P1 | 查院系和院系下专业 | A |
-| 3 | `specialty_group_risk` | P0 | 专业组调剂风险初筛 | B |
-| 3 | `comparison_query` | P1 | 学校/专业/方案对比 | B |
-| 3 | `employment_summary` | P1 | 学校级就业升学摘要 | B |
-| 3 | `major_market_reference` | P1 | 专业通用市场参考 | B |
-| 3 | `source_trace_lookup` | P1 | 解释数据来源和可信度 | B/C |
-| 4 | `transfer_policy_lookup` | P1 | 查转专业政策 | C |
-| 4 | `major_streaming_policy_lookup` | P1 | 查大类分流政策和比例 | C |
-| 4 | `civil_service_mapping` | P1 | 专业到考公岗位映射 | C |
-| 4 | `fee_and_campus_lookup` | P2 | 学费、校区、住宿等 | B/C |
-| 4 | `policy_rule_lookup` | P2 | 招生政策、批次规则 | C |
+状态口径：
+
+- `已完成`：已经有本地检索方法、function schema、dispatcher 支持、单元测试和基础烟测。
+- `提前完成`：原计划不是第一阶段，但因为数据已经接入，已经先落地可调用工具。
+- `部分完成`：底层数据或样本检索已具备，但还没有达到正式结论型工具的口径。
+- `待制作`：尚未实现工具入口。
+
+| 阶段 | 工具名 | 优先级 | 主要解决的问题 | 当前数据支持 | 实现状态 | 落地说明 |
+|---|---|---:|---|---|---|---|
+| 1 | `school_lookup` | P0 | 解析学校实体 | A | 已完成 | 已接入 `retrieval_tools.py`、`retrieval_function_registry.py`、烟测用例 |
+| 1 | `major_lookup` | P0 | 解析专业实体 | A | 已完成 | 已接入工具层、function schema、烟测用例 |
+| 1 | `school_profile` | P0 | 给学校查概况 | A | 已完成 | 返回学校基础、双一流、学科评估、学校级就业升学 |
+| 1 | `major_profile` | P0 | 给专业查概况 | A/B | 已完成 | 返回专业通用信息；明确不代表某校某专业就业 |
+| 1 | `school_major_list` | P0 | 给学校查专业列表 | A | 已完成 | 按学校代码查询开设专业；明确不等于某省招生计划 |
+| 1 | `major_school_list` | P0 | 给专业查开设学校 | A | 已完成 | 支持省份、学校层次粗筛；明确不等于当年招生计划 |
+| 1 | `school_major_profile` | P0 | 学校 + 专业深度解读 | A/B | 已完成 | 能合并多口径信息并返回 `data_gaps`；数据不足时返回 `partial` |
+| 1 | `score_to_rank` | P0 | 分数转位次 | A | 已完成 | 按省份、科类、年份转换位次区间 |
+| 1 | `admission_history` | P0 | 查历年录取分和位次 | A | 已完成 | 支持学校、专业、省份、科类、年份筛选 |
+| 1 | `data_gap_detection` | P0 | 识别缺失数据 | A | 已完成 | 返回当前问题缺少哪些本地数据，不编造 |
+| 2 | `rank_to_school_match` | P0 | 按位次推荐学校 | A/B | 待制作 | 下一步优先实现 |
+| 2 | `rank_to_major_match` | P0 | 按位次和专业推荐学校专业 | A/B | 待制作 | 在 `rank_to_school_match` 后实现 |
+| 2 | `specialty_group_lookup` | P0 | 查专业组和组内专业 | A | 待制作 | 已有部分专业组查询逻辑，尚未独立成工具 |
+| 2 | `plan_history` | P1 | 查招生计划变化 | A | 待制作 | 需要先审计招生计划字段 |
+| 2 | `subject_requirement_lookup` | P1 | 查选科要求 | A/B | 待制作 | 可从专业组/招生计划中抽取 |
+| 2 | `school_department_major_list` | P1 | 查院系和院系下专业 | A | 待制作 | 需要确认院系字段覆盖情况 |
+| 3 | `specialty_group_risk` | P0 | 专业组调剂风险初筛 | B | 待制作 | 依赖专业组构成和冷热门判断规则 |
+| 3 | `comparison_query` | P1 | 学校/专业/方案对比 | B | 待制作 | 需要复用已有画像工具组合 |
+| 3 | `employment_summary` | P1 | 学校级就业升学摘要 | B | 待制作 | 学校级摘要已有，尚未独立成正式工具 |
+| 3 | `major_market_reference` | P1 | 专业通用市场参考 | B | 提前完成 | 已接入 rysxai 市场样本表；明确不是校专业就业 |
+| 3 | `source_trace_lookup` | P1 | 解释数据来源和可信度 | B/C | 待制作 | 需要统一 source/evidence 元数据 |
+| 4 | `transfer_policy_lookup` | P1 | 查转专业政策 | C | 部分完成 | `rysxai_transfer_policies` 入库支持已完成；正式检索工具待做 |
+| 4 | `major_streaming_policy_lookup` | P1 | 查大类分流政策和比例 | C | 待制作 | 需要新增或确认分流比例数据源 |
+| 4 | `civil_service_role_search` | P1 | 专业到考公岗位样本检索 | C | 提前完成 | 已接入考公岗位样本；仅表示岗位文本命中，不等于最终可报 |
+| 4 | `civil_service_mapping` | P1 | 专业到考公岗位映射与可报判定 | C | 部分完成 | 样本检索已完成；正式映射、人工确认和可报判定未完成 |
+| 4 | `fee_and_campus_lookup` | P2 | 学费、校区、住宿等 | B/C | 待制作 | 需要审计字段和来源 |
+| 4 | `policy_rule_lookup` | P2 | 招生政策、批次规则 | C | 待制作 | 需要联网/人工确认后入库 |
 
 ## 分阶段实现路线
 
@@ -805,6 +813,15 @@ data_gap_detection
 ```
 
 ## 验收清单
+
+当前完成记录（2026-05-20）：
+
+- 第一阶段 10 个 P0 工具已经全部实现。
+- `major_market_reference` 和 `civil_service_role_search` 已经提前实现，用于读取已经接入的市场样本和考公岗位样本。
+- 已完成 agent function schema 注册层：`scripts/retrieval_function_registry.py`。
+- 已完成本地批量烟测脚本：`scripts/run_retrieval_smoke_cases.py`。
+- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 62 个测试通过。
+- 当前真实库抽样烟测覆盖 12 个工具入口；`school_major_profile` 在缺少校专业级证据时会按预期返回 `partial`。
 
 第一阶段完成时应满足：
 
