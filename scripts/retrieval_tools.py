@@ -120,6 +120,25 @@ def tool_result(
     }
 
 
+def _merge_source_tables(*table_groups: list[str] | tuple[str, ...]) -> list[str]:
+    """Merge source table lists while preserving their first-seen order.
+
+    Many higher-level tools first normalize a school or major through another
+    lookup tool and then run their own SQL.  Returning the merged table list
+    keeps the evidence trail honest: if a major nickname was resolved through
+    `entity_aliases`, the final tool response should still disclose that.
+    """
+
+    merged: list[str] = []
+    seen: set[str] = set()
+    for table_group in table_groups:
+        for table in table_group:
+            if table not in seen:
+                seen.add(table)
+                merged.append(table)
+    return merged
+
+
 class RetrievalTools:
     """Collection of local retrieval functions callable by a future agent.
 
@@ -174,7 +193,7 @@ class RetrievalTools:
                 "not_found",
                 {"major_text": major_text, "limit": limit},
                 data={"selected_major": {}, "candidates": []},
-                source_tables=["edu_major"],
+                source_tables=["edu_major", "entity_aliases"],
                 warnings=["本地库未命中专业实体，不能猜测专业。"],
             )
 
@@ -184,8 +203,8 @@ class RetrievalTools:
             {"major_text": major_text, "limit": limit},
             normalized_slots={"major_name": rows[0].get("special_name"), "major_code": rows[0].get("code")},
             data={"selected_major": rows[0], "candidates": rows},
-            scope_notes=["专业实体解析来自 edu_major；第一版尚未启用人工确认别名表。"],
-            source_tables=["edu_major"],
+            scope_notes=["专业实体解析来自 edu_major 和 entity_aliases；短简称只使用已确认别名，不直接做短词模糊匹配。"],
+            source_tables=["edu_major", "entity_aliases"],
         )
 
     def school_profile(self, school_text: str) -> dict[str, Any]:
@@ -253,7 +272,7 @@ class RetrievalTools:
                 "专业资料来自 edu_major，是专业通用级数据。",
                 "薪资和就业方向不代表某学校某专业毕业生真实结果。",
             ],
-            source_tables=["edu_major"],
+            source_tables=_merge_source_tables(major_result["source_tables"], ["edu_major"]),
         )
 
     def school_major_list(
@@ -314,7 +333,10 @@ class RetrievalTools:
             normalized_slots=major_result["normalized_slots"],
             data={"major": major, "schools": rows},
             scope_notes=["开设学校列表是学校专业关系口径，不等于某省当年有招生计划。"],
-            source_tables=["edu_major", "edu_school_major", "edu_university"],
+            source_tables=_merge_source_tables(
+                major_result["source_tables"],
+                ["edu_school_major", "edu_university"],
+            ),
         )
 
     def school_major_profile(
@@ -395,8 +417,7 @@ class RetrievalTools:
             ],
             data_gaps=SCHOOL_MAJOR_PROFILE_GAPS,
             source_tables=[
-                "edu_university",
-                "edu_major",
+                *_merge_source_tables(school_result["source_tables"], major_result["source_tables"]),
                 "edu_school_major",
                 "edu_university_subject_eval",
                 "edu_dual_class",
@@ -703,7 +724,11 @@ class RetrievalTools:
                 "历史录取不代表未来录取保证。",
             ],
             needs_clarification=missing_context,
-            source_tables=["edu_school_admission_stats"],
+            source_tables=_merge_source_tables(
+                school_result["source_tables"] if school_text else [],
+                major_result["source_tables"] if major_text else [],
+                ["edu_school_admission_stats"],
+            ),
             warnings=["缺少省份或科类时，只能作为宽泛历史样本。"] if missing_context else [],
         )
 
@@ -731,7 +756,10 @@ class RetrievalTools:
                 normalized_slots=major_result["normalized_slots"],
                 data={"major": major, "snapshot": {}, "job_samples": []},
                 data_gaps=["专业市场观察数据"],
-                source_tables=["rysxai_major_market_snapshots"],
+                source_tables=_merge_source_tables(
+                    major_result["source_tables"],
+                    ["rysxai_major_market_snapshots"],
+                ),
                 warnings=["本地库未命中该专业的 rysxai 市场快照。"],
             )
 
@@ -757,7 +785,10 @@ class RetrievalTools:
             scope_notes=[
                 "这是第三方招聘市场样本和专业市场观察，不代表某学校某专业毕业生真实就业去向或薪资。",
             ],
-            source_tables=["rysxai_major_market_snapshots", "rysxai_major_job_samples"],
+            source_tables=_merge_source_tables(
+                major_result["source_tables"],
+                ["rysxai_major_market_snapshots", "rysxai_major_job_samples"],
+            ),
         )
 
     def civil_service_role_search(
@@ -786,7 +817,10 @@ class RetrievalTools:
                 "最终可报范围应以当年官方招录公告和岗位表解释为准。",
             ],
             data_gaps=[] if rows else ["考公岗位专业候选"],
-            source_tables=["civil_service_major_role_candidates", "rysxai_civil_service_roles"],
+            source_tables=_merge_source_tables(
+                major_result["source_tables"],
+                ["civil_service_major_role_candidates", "rysxai_civil_service_roles"],
+            ),
             warnings=[] if rows else ["本地库未命中该专业代码的考公岗位候选。"],
         )
 

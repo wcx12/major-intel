@@ -88,14 +88,17 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(result["data"]["selected_major"], {})
         self.assertIn("本地库未命中专业实体", result["warnings"][0])
 
-    def test_major_lookup_uses_builtin_alias_for_common_short_name(self):
+    def test_major_lookup_uses_entity_alias_for_common_short_name(self):
         tools = RetrievalTools(FakeClient([("FROM edu_major", [MAJOR])]))
 
         result = tools.major_lookup("计科")
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["normalized_slots"]["major_code"], "080901")
-        self.assertIn("计算机科学与技术", tools.client.queries[-1])
+        self.assertIn("entity_aliases", result["source_tables"])
+        self.assertIn("entity_aliases", result["scope_notes"][0])
+        self.assertIn("FROM entity_aliases", tools.client.queries[-1])
+        self.assertIn("alias_normalized = '计科'", tools.client.queries[-1])
         self.assertNotIn("special_name LIKE '%计科%'", tools.client.queries[-1])
 
     def test_school_major_list_uses_school_code_and_explains_scope(self):

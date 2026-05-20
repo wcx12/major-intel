@@ -23,26 +23,6 @@ DEFAULT_MISSING_DATA = [
 ]
 
 
-MAJOR_ALIAS_TARGETS = {
-    # 第一版先放最常见、歧义相对低的学生口语简称。后续如果落地
-    # entity_aliases 表，这里可以变成“种子别名 + 数据库别名”的合并结果。
-    "计科": ("计算机科学与技术",),
-    "软工": ("软件工程",),
-    "软件": ("软件工程",),
-    "大数据": ("数据科学与大数据技术",),
-    "数科": ("数据科学与大数据技术",),
-    "电信": ("电子信息工程", "通信工程"),
-    "电子信息": ("电子信息工程",),
-    "通信": ("通信工程",),
-    "电气": ("电气工程及其自动化",),
-    "自动化": ("自动化",),
-    "临床": ("临床医学",),
-    "口腔": ("口腔医学",),
-    "会计": ("会计学",),
-    "金融": ("金融学",),
-}
-
-
 @dataclass(frozen=True)
 class DbConfig:
     host: str = "127.0.0.1"
@@ -133,14 +113,15 @@ LIMIT {int(limit)}
 def resolve_major_sql(text: str, limit: int = 5) -> str:
     query = sql_quote(text)
     like = sql_quote(f"%{text}%")
-    alias_targets = _major_alias_targets(text)
-    alias_clauses = [f"special_name = {sql_quote(alias)}" for alias in alias_targets]
-    fuzzy_allowed = _major_fuzzy_allowed(text, alias_targets)
+    alias_names = _major_alias_subquery_sql(text, "canonical_name")
+    alias_codes = _major_alias_subquery_sql(text, "canonical_code")
+    fuzzy_allowed = _major_fuzzy_allowed(text)
     where_clauses = [
         f"special_name = {query}",
         f"code = {query}",
         f"special_id = {query}",
-        *alias_clauses,
+        f"special_name IN ({alias_names})",
+        f"code IN ({alias_codes})",
     ]
     if fuzzy_allowed:
         where_clauses.append(f"special_name LIKE {like}")
@@ -149,13 +130,11 @@ def resolve_major_sql(text: str, limit: int = 5) -> str:
         f"WHEN special_name = {query} THEN 0",
         f"WHEN code = {query} THEN 1",
         f"WHEN special_id = {query} THEN 2",
+        f"WHEN special_name IN ({alias_names}) THEN 3",
+        f"WHEN code IN ({alias_codes}) THEN 4",
     ]
-    order_clauses.extend(
-        f"WHEN special_name = {sql_quote(alias)} THEN {3 + index}"
-        for index, alias in enumerate(alias_targets)
-    )
     if fuzzy_allowed:
-        order_clauses.append(f"WHEN special_name LIKE {like} THEN {3 + len(alias_targets)}")
+        order_clauses.append("WHEN special_name LIKE {like} THEN 5".format(like=like))
 
     return f"""
 SELECT special_id, code, special_name, type_name, level2_name, level3_name,
@@ -179,24 +158,30 @@ LIMIT {int(limit)}
 """.strip()
 
 
-def _major_alias_targets(text: str) -> tuple[str, ...]:
-    normalized = _normalize_major_query(text)
-    return MAJOR_ALIAS_TARGETS.get(normalized, ())
+def _major_alias_subquery_sql(text: str, column: str) -> str:
+    normalized = sql_quote(_normalize_major_query(text))
+    column_filter = "AND canonical_code <> ''" if column == "canonical_code" else ""
+    return f"""
+SELECT {column}
+FROM entity_aliases
+WHERE entity_type = 'major'
+  AND alias_normalized = {normalized}
+  AND status = 'active'
+  AND (deleted IS NULL OR deleted = b'0')
+  {column_filter}
+""".strip()
 
 
-def _major_fuzzy_allowed(text: str, alias_targets: tuple[str, ...]) -> bool:
+def _major_fuzzy_allowed(text: str) -> bool:
     """Decide whether `special_name LIKE '%query%'` is safe enough to use.
 
     Very short natural-language inputs are usually abbreviations, not stable
     substrings.  For example, "计科" appears inside "材料设计科学与工程", so a raw
-    LIKE clause would confidently return the wrong major.  If a short query has
-    an alias hit, the alias is the safer route; if it has no alias, exact name,
-    code, and special_id matching still run, but fuzzy name matching is held
-    back until the query is long enough.
+    LIKE clause would confidently return the wrong major.  Exact name, code,
+    special_id, and confirmed database aliases still run for short inputs; fuzzy
+    name matching is held back until the query is long enough.
     """
 
-    if alias_targets:
-        return False
     return len(_normalize_major_query(text)) >= 3
 
 

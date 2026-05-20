@@ -90,7 +90,7 @@ data_gap_detection
 已经具备的核心能力：
 
 - 能解析学校实体，并返回规范学校与候选学校。
-- 能解析专业实体，并返回规范专业与候选专业；已完成第一版常用简称保护，例如“计科”会优先命中“计算机科学与技术”。
+- 能解析专业实体，并返回规范专业与候选专业；已接入数据库确认别名表 `entity_aliases`，例如“计科”会优先命中“计算机科学与技术”。
 - 能查询学校画像、专业画像、学校开设专业、专业开设学校。
 - 能查询学校 + 专业组合画像，并在校专业级就业、薪资、转专业、分流等数据不足时返回 `data_gaps`。
 - 能把同省、同科类、同年份分数转换为位次区间。
@@ -110,7 +110,7 @@ data_gap_detection
 | 阶段 | 工具名 | 优先级 | 主要解决的问题 | 当前数据支持 | 实现状态 | 落地说明 |
 |---|---|---:|---|---|---|---|
 | 1 | `school_lookup` | P0 | 解析学校实体 | A | 已完成 | 已接入 `retrieval_tools.py`、`retrieval_function_registry.py`、烟测用例 |
-| 1 | `major_lookup` | P0 | 解析专业实体 | A | 已完成 | 已接入工具层、function schema、烟测用例；已加入第一版常用专业简称保护，完整别名表待做 |
+| 1 | `major_lookup` | P0 | 解析专业实体 | A | 已完成 | 已接入工具层、function schema、烟测用例；常用专业简称已迁入 `entity_aliases`，短简称不再走危险模糊匹配 |
 | 1 | `school_profile` | P0 | 给学校查概况 | A | 已完成 | 返回学校基础、双一流、学科评估、学校级就业升学 |
 | 1 | `major_profile` | P0 | 给专业查概况 | A/B | 已完成 | 返回专业通用信息；明确不代表某校某专业就业 |
 | 1 | `school_major_list` | P0 | 给学校查专业列表 | A | 已完成 | 按学校代码查询开设专业；明确不等于某省招生计划 |
@@ -289,8 +289,8 @@ entity_alias_candidates
 
 - 已可按专业全称、专业代码、`special_id` 和专业名模糊匹配查询 `edu_major`。
 - 已修复 MySQL CLI 长文本换行解析问题，专业介绍字段里的换行不会再被拆成假候选记录。
-- 已加入第一版内置常用简称：例如“计科”优先命中“计算机科学与技术”，“软工”优先命中“软件工程”。
-- 完整专业别名表、候选别名沉淀和人工确认流程尚未完成；当前内置简称只是第一版保护，不应长期替代数据库别名体系。
+- 已接入数据库确认别名表 `entity_aliases`：例如“计科”优先命中“计算机科学与技术”，“软工”优先命中“软件工程”。
+- 已新增 `entity_alias_candidates` 作为后续自动发现候选别名的沉淀表；候选别名仍需人工确认后才能进入正式解析链路。
 
 输入：
 
@@ -319,12 +319,12 @@ entity_alias_candidates
 
 ```text
 edu_major
+entity_aliases
 ```
 
-规划表：
+配套表：
 
 ```text
-entity_aliases
 entity_alias_candidates
 ```
 
@@ -771,8 +771,8 @@ edu_university_department_major
 | `query_logs` | 1 | 记录用户原始问题、识别槽位、调用工具 |
 | `retrieval_cache` | 1 | 缓存工具调用结果 |
 | `data_gap_queue` | 1 | 保存缺失数据和后续补数任务 |
-| `entity_aliases` | 1 | 保存人工确认别名 |
-| `entity_alias_candidates` | 1 | 保存自动发现的候选别名 |
+| `entity_aliases` | 1 | 已落地；保存人工确认别名，当前 `major_lookup` 已使用 |
+| `entity_alias_candidates` | 1 | 已落地；保存自动发现的候选别名，待人工确认后进入正式别名表 |
 | `source_documents` | 3 | 保存网页、PDF、招生章程等来源 |
 | `school_major_evidence` | 3 | 保存学校官网专业介绍和培养方案 |
 | `transfer_policy_sources` | 4 | 保存转专业政策 |
@@ -881,9 +881,10 @@ data_gap_detection
 - `major_market_reference` 和 `civil_service_role_search` 已经提前实现，用于读取已经接入的市场样本和考公岗位样本。
 - 已完成 agent function schema 注册层：`scripts/retrieval_function_registry.py`。
 - 已完成本地批量烟测脚本：`scripts/run_retrieval_smoke_cases.py`。
+- 已完成数据库别名初始化脚本：`scripts/setup_entity_aliases.py`，会创建/维护 `entity_aliases` 与 `entity_alias_candidates`。
 - 已修复 MySQL CLI 长文本换行解析问题，`major_lookup` 不会再把专业介绍里的“关键词/课程列表”拆成假候选记录。
-- 已完成 `major_lookup` 第一版常用专业简称保护，真实库验证“计科”返回“计算机科学与技术”。
-- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 70 个测试通过。
+- 已完成 `major_lookup` 数据库别名解析，真实库验证“计科”返回“计算机科学与技术”，“软工”返回“软件工程”。
+- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 72 个测试通过。
 - 当前烟测用例矩阵覆盖 13 个工具入口；本轮真实库抽样验证 `rank_to_school_match` 3 条样本通过。
 
 第一阶段完成时应满足：

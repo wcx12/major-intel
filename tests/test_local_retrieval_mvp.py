@@ -51,7 +51,9 @@ class LocalRetrievalMvpTests(unittest.TestCase):
     def test_major_lookup_alias_avoids_short_fuzzy_match(self):
         sql = resolve_major_sql("计科")
 
-        self.assertIn("计算机科学与技术", sql)
+        self.assertIn("FROM entity_aliases", sql)
+        self.assertIn("alias_normalized = '计科'", sql)
+        self.assertNotIn("计算机科学与技术", sql)
         self.assertNotIn("special_name LIKE '%计科%'", sql)
 
     def test_parse_mysql_tsv_decodes_escaped_newlines_and_nulls(self):
