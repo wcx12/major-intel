@@ -1,0 +1,817 @@
+# Major Intel 检索 Function Call 工具规划
+
+## 阅读说明
+
+本文定义后续 agent 可以调用的检索工具。这里的 function call 不是按用户自然语言问法拆分，而是按稳定的底层检索能力拆分。用户可以问很多种问题，但 agent 应该把问题解析成槽位，然后自动选择一个或多个工具组合调用。
+
+目标是先把所有需要制作的工具列完整，再分阶段实现。第一阶段只做核心高频能力，但文档会保留完整工具表，避免后续遗漏。
+
+## 总体调用流程
+
+```text
+用户自然语言问题
+  -> agent 识别意图和槽位
+  -> 判断是否缺少关键信息
+  -> 调用一个或多个检索 function
+  -> function 查询本地 MySQL、缓存或缺口队列
+  -> function 返回结构化 JSON、口径说明、缺失项
+  -> agent 组织最终回答
+```
+
+工具层必须坚持三个原则：
+
+1. 工具只返回可追踪的结构化事实、口径说明和缺口，不替用户做无证据判断。
+2. 工具缺少必要参数时返回 `needs_clarification`，不猜省份、科类、年份、学校或专业。
+3. 工具必须区分学校级、专业通用级、校专业级、招生专业组级、录取统计级数据口径。
+
+## 通用输出结构
+
+所有工具尽量返回统一外壳，便于 agent 合并结果。
+
+```json
+{
+  "tool_name": "school_lookup",
+  "status": "ok",
+  "input": {},
+  "normalized_slots": {},
+  "data": {},
+  "scope_notes": [],
+  "data_gaps": [],
+  "needs_clarification": [],
+  "source_tables": [],
+  "warnings": []
+}
+```
+
+字段含义：
+
+| 字段 | 含义 |
+|---|---|
+| `tool_name` | 工具名 |
+| `status` | `ok`、`not_found`、`needs_clarification`、`partial`、`error` |
+| `input` | 原始输入 |
+| `normalized_slots` | 规范化后的学校、专业、省份、科类、分数、位次等 |
+| `data` | 工具返回的结构化结果 |
+| `scope_notes` | 数据口径说明 |
+| `data_gaps` | 本地库缺失但回答该问题需要的数据 |
+| `needs_clarification` | 需要追问用户的槽位 |
+| `source_tables` | 使用到的本地 MySQL 表 |
+| `warnings` | 风险提示，例如“历史录取不代表录取保证” |
+
+## 待制作 Function Call 工具总表
+
+| 阶段 | 工具名 | 优先级 | 主要解决的问题 | 当前数据支持 |
+|---|---|---:|---|---|
+| 1 | `school_lookup` | P0 | 解析学校实体 | A |
+| 1 | `major_lookup` | P0 | 解析专业实体 | A |
+| 1 | `school_profile` | P0 | 给学校查概况 | A |
+| 1 | `major_profile` | P0 | 给专业查概况 | A/B |
+| 1 | `school_major_list` | P0 | 给学校查专业列表 | A |
+| 1 | `major_school_list` | P0 | 给专业查开设学校 | A |
+| 1 | `school_major_profile` | P0 | 学校 + 专业深度解读 | A/B，已有 MVP |
+| 1 | `score_to_rank` | P0 | 分数转位次 | A |
+| 1 | `admission_history` | P0 | 查历年录取分和位次 | A |
+| 1 | `data_gap_detection` | P0 | 识别缺失数据 | A |
+| 2 | `rank_to_school_match` | P0 | 按位次推荐学校 | A/B |
+| 2 | `rank_to_major_match` | P0 | 按位次和专业推荐学校专业 | A/B |
+| 2 | `specialty_group_lookup` | P0 | 查专业组和组内专业 | A |
+| 2 | `plan_history` | P1 | 查招生计划变化 | A |
+| 2 | `subject_requirement_lookup` | P1 | 查选科要求 | A/B |
+| 2 | `school_department_major_list` | P1 | 查院系和院系下专业 | A |
+| 3 | `specialty_group_risk` | P0 | 专业组调剂风险初筛 | B |
+| 3 | `comparison_query` | P1 | 学校/专业/方案对比 | B |
+| 3 | `employment_summary` | P1 | 学校级就业升学摘要 | B |
+| 3 | `major_market_reference` | P1 | 专业通用市场参考 | B |
+| 3 | `source_trace_lookup` | P1 | 解释数据来源和可信度 | B/C |
+| 4 | `transfer_policy_lookup` | P1 | 查转专业政策 | C |
+| 4 | `major_streaming_policy_lookup` | P1 | 查大类分流政策和比例 | C |
+| 4 | `civil_service_mapping` | P1 | 专业到考公岗位映射 | C |
+| 4 | `fee_and_campus_lookup` | P2 | 学费、校区、住宿等 | B/C |
+| 4 | `policy_rule_lookup` | P2 | 招生政策、批次规则 | C |
+
+## 分阶段实现路线
+
+### 第一阶段：核心实体与基础检索
+
+目标：先让 agent 能查学校、查专业、查学校专业组合、查录取历史，并能把缺失数据说清楚。
+
+本阶段工具：
+
+```text
+school_lookup
+major_lookup
+school_profile
+major_profile
+school_major_list
+major_school_list
+school_major_profile
+score_to_rank
+admission_history
+data_gap_detection
+```
+
+验收标准：
+
+- 输入学校名，能返回规范化学校实体和候选列表。
+- 输入专业名，能返回规范化专业实体和候选列表。
+- 输入学校，能返回学校概况和专业列表。
+- 输入专业，能返回专业概况和开设学校。
+- 输入学校 + 专业，能返回校专业解读和缺失数据。
+- 输入省份、科类、分数，能转成位次。
+- 输入学校/专业/省份/科类，能查历年录取。
+- 每个工具都有测试覆盖正常路径、缺参路径、未命中路径。
+
+### 第二阶段：分数位次匹配与专业组
+
+目标：覆盖高考报考最核心场景，也就是“我这个分数/位次能报什么”。
+
+本阶段工具：
+
+```text
+rank_to_school_match
+rank_to_major_match
+specialty_group_lookup
+plan_history
+subject_requirement_lookup
+school_department_major_list
+```
+
+验收标准：
+
+- 输入省份、科类、位次，能输出冲稳保学校列表。
+- 输入省份、科类、位次、专业偏好，能输出可报学校专业。
+- 输入学校、专业、省份、年份，能查对应专业组和选科要求。
+- 推荐结果必须带年份、位次、风险分层和“不保证录取”的提示。
+- 缺少省份、科类、分数/位次时必须返回追问槽位。
+
+### 第三阶段：风险解释与对比决策
+
+目标：让系统从“查数据”升级到“辅助解释风险”，但仍然保持有证据边界。
+
+本阶段工具：
+
+```text
+specialty_group_risk
+comparison_query
+employment_summary
+major_market_reference
+source_trace_lookup
+```
+
+验收标准：
+
+- 能对专业组构成做冷门风险初筛，但不声称真实分流比例。
+- 能对两个学校、两个专业、两个学校专业组合做维度化对比。
+- 能输出学校级就业和专业通用市场参考，并明确口径。
+- 能回答“这些数据来自哪里/可信度如何”的基础问题。
+
+### 第四阶段：政策、就业深水区与人工/agent 补数
+
+目标：覆盖转专业、大类分流、考公、政策规则等高风险问题。这一阶段需要新增数据表、联网 agent 和人工审核。
+
+本阶段工具：
+
+```text
+transfer_policy_lookup
+major_streaming_policy_lookup
+civil_service_mapping
+fee_and_campus_lookup
+policy_rule_lookup
+```
+
+验收标准：
+
+- 没有官方来源时不能给确定结论。
+- 能把缺失政策写入 `data_gap_queue`。
+- 联网 agent 抓取结果必须经过来源记录和可信度标注。
+- 人工确认后的数据才能进入正式可回答范围。
+
+## 第一阶段工具详细定义
+
+### 1. `school_lookup`
+
+用途：解析学校实体，返回最可能的学校和候选学校列表。
+
+典型调用场景：
+
+- 用户提到学校简称、全称、旧名。
+- 其他工具需要先确认学校。
+
+输入：
+
+```json
+{
+  "school_text": "杭电",
+  "limit": 5
+}
+```
+
+输出 `data`：
+
+```json
+{
+  "selected_school": {
+    "school_id": "10124",
+    "code": "10336",
+    "name": "杭州电子科技大学",
+    "province_name": "浙江",
+    "city_name": "杭州市",
+    "is211": false,
+    "is_dual_class": false
+  },
+  "candidates": []
+}
+```
+
+使用表：
+
+```text
+edu_university
+entity_aliases
+entity_alias_candidates
+```
+
+第一阶段可以先只用 `edu_university`，别名表后续补。
+
+### 2. `major_lookup`
+
+用途：解析专业实体，返回最可能的专业和候选专业列表。
+
+输入：
+
+```json
+{
+  "major_text": "计科",
+  "limit": 5
+}
+```
+
+输出 `data`：
+
+```json
+{
+  "selected_major": {
+    "code": "080901",
+    "special_name": "计算机科学与技术",
+    "level2_name": "工学",
+    "level3_name": "计算机类"
+  },
+  "candidates": []
+}
+```
+
+使用表：
+
+```text
+edu_major
+entity_aliases
+entity_alias_candidates
+```
+
+### 3. `school_profile`
+
+用途：给一个学校返回学校概况。
+
+输入：
+
+```json
+{
+  "school_text": "杭州电子科技大学"
+}
+```
+
+输出 `data`：
+
+```json
+{
+  "school": {},
+  "dual_class": [],
+  "subject_evals": [],
+  "latest_employment": {}
+}
+```
+
+使用表：
+
+```text
+edu_university
+edu_dual_class
+edu_university_subject_eval
+edu_university_employment
+```
+
+口径说明：
+
+- 学校基础信息是学校级事实。
+- 就业升学是学校级数据，不代表某个专业。
+
+### 4. `major_profile`
+
+用途：给一个专业返回专业概况、学习内容、就业方向和通用薪资参考。
+
+输入：
+
+```json
+{
+  "major_text": "机械设计制造及其自动化"
+}
+```
+
+输出 `data`：
+
+```json
+{
+  "major": {},
+  "salary_reference": {},
+  "job_directions": []
+}
+```
+
+使用表：
+
+```text
+edu_major
+```
+
+口径说明：
+
+- 薪资是专业通用参考，不代表某校某专业真实薪资。
+- 就业方向是通用方向，不代表具体毕业去向。
+
+### 5. `school_major_list`
+
+用途：给学校查开设专业列表。
+
+输入：
+
+```json
+{
+  "school_text": "杭州电子科技大学",
+  "major_category": "计算机类",
+  "limit": 100
+}
+```
+
+输出 `data`：
+
+```json
+{
+  "school": {},
+  "majors": []
+}
+```
+
+使用表：
+
+```text
+edu_school_major
+edu_university_department_major
+edu_major
+```
+
+口径说明：
+
+- 学校开设专业不等于某省当年招生专业。
+- 如果用户带省份和年份，应该改用招生计划相关工具。
+
+### 6. `major_school_list`
+
+用途：给专业查开设学校列表。
+
+输入：
+
+```json
+{
+  "major_text": "计算机科学与技术",
+  "province_filter": "广东",
+  "school_level_filter": "双一流",
+  "limit": 50
+}
+```
+
+输出 `data`：
+
+```json
+{
+  "major": {},
+  "schools": []
+}
+```
+
+使用表：
+
+```text
+edu_school_major
+edu_university_department_major
+edu_university
+edu_university_subject_eval
+```
+
+### 7. `school_major_profile`
+
+用途：给学校 + 专业生成深度检索结果。这个工具已经有 CLI MVP，后续需要改造成标准 function call 输出。
+
+输入：
+
+```json
+{
+  "school_text": "杭州电子科技大学",
+  "major_text": "机械设计制造及其自动化",
+  "province": "浙江",
+  "subject_type": "物理",
+  "year": 2025
+}
+```
+
+输出 `data`：
+
+```json
+{
+  "school": {},
+  "major": {},
+  "school_major": {},
+  "subject_evals": [],
+  "dual_class": [],
+  "employment": {},
+  "specialty_groups": []
+}
+```
+
+使用表：
+
+```text
+edu_university
+edu_major
+edu_school_major
+edu_university_subject_eval
+edu_dual_class
+edu_university_employment
+edu_college_specialty_group
+edu_specialty_group_major
+```
+
+### 8. `score_to_rank`
+
+用途：把分数转换为某省某科类某年的位次。
+
+输入：
+
+```json
+{
+  "province": "广东",
+  "subject_type": "物理",
+  "score": 580,
+  "year": 2025
+}
+```
+
+输出 `data`：
+
+```json
+{
+  "score": 580,
+  "rank_range": {
+    "highest_rank": 43000,
+    "lowest_rank": 45500
+  },
+  "same_count": 2500
+}
+```
+
+使用表：
+
+```text
+edu_score_rank
+```
+
+口径说明：
+
+- 分数只在同省、同科类、同年份内有意义。
+- 后续匹配应优先用位次。
+
+### 9. `admission_history`
+
+用途：查学校、专业、专业组的历年录取分数和位次。
+
+输入：
+
+```json
+{
+  "school_text": "杭州电子科技大学",
+  "major_text": "计算机科学与技术",
+  "province": "广东",
+  "subject_type": "物理",
+  "years": [2023, 2024, 2025]
+}
+```
+
+输出 `data`：
+
+```json
+{
+  "records": [
+    {
+      "year": 2025,
+      "lowest_score": 580,
+      "lowest_rank": 45000,
+      "plan_count": 5,
+      "batch": "本科批"
+    }
+  ]
+}
+```
+
+使用表：
+
+```text
+edu_school_admission_stats
+edu_university_score_config
+edu_university_score_group
+edu_university_score_special
+```
+
+### 10. `data_gap_detection`
+
+用途：根据当前问题和已返回数据，判断哪些关键事实缺失。
+
+输入：
+
+```json
+{
+  "question_type": "school_major_profile",
+  "school_text": "杭州电子科技大学",
+  "major_text": "计算机科学与技术",
+  "available_fields": [
+    "school_basic",
+    "major_basic",
+    "subject_eval"
+  ]
+}
+```
+
+输出 `data`：
+
+```json
+{
+  "missing_items": [
+    "校专业级薪资分布",
+    "校专业级Top对口公司",
+    "转专业政策"
+  ],
+  "queue_candidates": []
+}
+```
+
+使用表：
+
+```text
+data_gap_queue
+```
+
+第一阶段可以先返回内存中的缺口列表，第二阶段再落库。
+
+## 第二阶段工具简要定义
+
+### `rank_to_school_match`
+
+输入省份、科类、位次、风险偏好，返回冲稳保学校列表。
+
+核心表：
+
+```text
+edu_school_admission_stats
+edu_university
+edu_score_rank
+```
+
+### `rank_to_major_match`
+
+输入省份、科类、位次、专业偏好，返回可报学校专业列表。
+
+核心表：
+
+```text
+edu_school_admission_stats
+edu_major
+edu_university
+```
+
+### `specialty_group_lookup`
+
+输入学校、专业、省份、年份，返回专业组和组内专业。
+
+核心表：
+
+```text
+edu_college_specialty_group
+edu_specialty_group_major
+edu_university_plan_special_group
+edu_university_plan_special
+```
+
+### `plan_history`
+
+输入学校、专业、省份、年份，返回招生计划变化。
+
+核心表：
+
+```text
+edu_university_plan_config
+edu_university_plan_special_group
+edu_university_plan_special
+```
+
+### `subject_requirement_lookup`
+
+输入学校、专业、省份、年份，返回选科要求。
+
+核心表：
+
+```text
+edu_specialty_group_major
+edu_university_plan_special_group
+edu_university_plan_special
+```
+
+### `school_department_major_list`
+
+输入学校，返回院系和院系下专业。
+
+核心表：
+
+```text
+edu_university_department
+edu_university_department_major
+```
+
+## 第三阶段工具简要定义
+
+### `specialty_group_risk`
+
+基于专业组构成、用户目标专业、组内低偏好专业数量、计划数和录取位次做风险初筛。
+
+注意：该工具不能声称真实调剂概率，也不能替代学校真实分流政策。
+
+### `comparison_query`
+
+把两个或多个对象拆成维度对比，例如学校层次、城市、专业实力、录取风险、就业升学、费用、数据缺口。
+
+### `employment_summary`
+
+输出学校级就业升学摘要。
+
+注意：该工具不能把学校级就业率写成某专业就业率。
+
+### `major_market_reference`
+
+输出专业通用市场参考。
+
+注意：该工具不能把专业通用薪资写成某校某专业真实薪资。
+
+### `source_trace_lookup`
+
+解释某个结论来自哪些表、哪些字段、是否有外部来源链接。
+
+## 第四阶段工具简要定义
+
+### `transfer_policy_lookup`
+
+查转专业政策，需要新增官方来源表。
+
+### `major_streaming_policy_lookup`
+
+查大类分流政策和比例，需要新增官方来源表。
+
+### `civil_service_mapping`
+
+查专业对应考公岗位，需要新增专业代码到岗位的映射表。
+
+### `fee_and_campus_lookup`
+
+查学费、校区、住宿、生活成本。学费可部分来自招生计划表，住宿和生活成本需要额外来源。
+
+### `policy_rule_lookup`
+
+查省份批次规则、平行志愿、专项计划、体检限制等政策问题，需要高可信官方来源。
+
+## 建议新增支撑表
+
+为了让 function call 工具可追踪、可缓存、可人工兜底，建议逐步增加以下表。
+
+| 表名 | 阶段 | 作用 |
+|---|---|---|
+| `query_logs` | 1 | 记录用户原始问题、识别槽位、调用工具 |
+| `retrieval_cache` | 1 | 缓存工具调用结果 |
+| `data_gap_queue` | 1 | 保存缺失数据和后续补数任务 |
+| `entity_aliases` | 1 | 保存人工确认别名 |
+| `entity_alias_candidates` | 1 | 保存自动发现的候选别名 |
+| `source_documents` | 3 | 保存网页、PDF、招生章程等来源 |
+| `school_major_evidence` | 3 | 保存学校官网专业介绍和培养方案 |
+| `transfer_policy_sources` | 4 | 保存转专业政策 |
+| `major_streaming_sources` | 4 | 保存大类分流政策 |
+| `civil_service_major_roles` | 4 | 保存专业到考公岗位映射 |
+
+## 第一阶段实现建议
+
+第一阶段建议创建一个工具层脚本或模块，例如：
+
+```text
+scripts/retrieval_tools.py
+tests/test_retrieval_tools.py
+```
+
+同时逐步把现有 `scripts/local_retrieval_mvp.py` 中的逻辑拆出来复用。
+
+实现顺序建议：
+
+1. `school_lookup`
+2. `major_lookup`
+3. `school_profile`
+4. `major_profile`
+5. `school_major_list`
+6. `major_school_list`
+7. `school_major_profile`
+8. `score_to_rank`
+9. `admission_history`
+10. `data_gap_detection`
+
+每做一个工具，都必须先写测试，再实现。每个工具都要有丰富注释，尤其解释 SQL 关联字段和数据口径。
+
+## Agent 调用策略示例
+
+用户问题：
+
+```text
+广东物理 580 想学计算机，有哪些稳一点的学校？
+```
+
+agent 应抽取：
+
+```json
+{
+  "province": "广东",
+  "subject_type": "物理",
+  "score": 580,
+  "major_text": "计算机",
+  "risk_preference": "稳"
+}
+```
+
+调用：
+
+```text
+score_to_rank
+rank_to_major_match
+admission_history
+data_gap_detection
+```
+
+用户问题：
+
+```text
+杭州电子科技大学计算机怎么样？
+```
+
+agent 应抽取：
+
+```json
+{
+  "school_text": "杭州电子科技大学",
+  "major_text": "计算机"
+}
+```
+
+调用：
+
+```text
+school_major_profile
+admission_history
+data_gap_detection
+```
+
+用户问题：
+
+```text
+这个专业组会不会被调剂到冷门专业？
+```
+
+如果缺少专业组、省份、年份，agent 应先追问，而不是直接调用工具生成判断。
+
+```json
+{
+  "status": "needs_clarification",
+  "needs_clarification": ["school_text", "province", "year", "group_code"]
+}
+```
+
+## 验收清单
+
+第一阶段完成时应满足：
+
+- 工具清单中第一阶段 10 个工具均可被本地代码调用。
+- 每个工具都有输入 schema、输出 schema 和测试。
+- 每个工具都能返回 `scope_notes` 和 `data_gaps`。
+- 缺少必要参数时不会猜测，而是返回 `needs_clarification`。
+- 不存在实体时返回 `not_found`，不生成事实结论。
+- 分数匹配相关工具优先使用位次，不只用分数判断。
+- 所有新增代码均遵守 `CONTRIBUTING.md` 的丰富注释要求。
