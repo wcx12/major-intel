@@ -33,5 +33,6 @@ data/cache/
 data/processed/
 data/logs/
 reports/rysxai/
+gaokao_test_*.sql
 *.sqlite
 *.db
