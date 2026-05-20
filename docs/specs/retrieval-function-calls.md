@@ -139,6 +139,13 @@ data_gap_detection
 | 4 | `fee_and_campus_lookup` | P2 | 学费、校区、住宿等 | B/C | 待制作 | 需要审计字段和来源 |
 | 4 | `policy_rule_lookup` | P2 | 招生政策、批次规则 | C | 待制作 | 需要联网/人工确认后入库 |
 
+未完成工具摘要：
+
+- 第二阶段还缺 `specialty_group_lookup`、`plan_history`、`subject_requirement_lookup`、`school_department_major_list`。
+- 第三阶段还缺 `specialty_group_risk`、`comparison_query`、`employment_summary`、`source_trace_lookup`。
+- 第四阶段还缺 `major_streaming_policy_lookup`、`fee_and_campus_lookup`、`policy_rule_lookup`。
+- `transfer_policy_lookup`、`civil_service_mapping` 不是从零开始，但还没有达到正式可调用工具标准。
+
 ## 分阶段实现路线
 
 ### 第一阶段：核心实体与基础检索

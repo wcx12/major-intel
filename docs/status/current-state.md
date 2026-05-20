@@ -6,7 +6,7 @@
 
 ### 1. 本地检索与 function call 层
 
-当前已落地 13 个可调用检索入口：
+当前已落地 14 个正式可调用检索入口：
 
 ```text
 school_lookup
@@ -18,6 +18,7 @@ major_school_list
 school_major_profile
 score_to_rank
 rank_to_school_match
+rank_to_major_match
 admission_history
 major_market_reference
 civil_service_role_search
@@ -30,11 +31,70 @@ data_gap_detection
 - `scripts/retrieval_function_registry.py`：function schema 注册与 dispatcher。
 - `scripts/run_retrieval_smoke_cases.py`：本地 smoke case runner。
 - `scripts/local_retrieval_mvp.py`：面向本地 MySQL 的 CLI MVP。
+- `scripts/setup_entity_aliases.py`：创建和维护 `entity_aliases`、`entity_alias_candidates`。
 
-本轮新增整理点：
+已经完成的关键修复和增强：
 
 - 修复 MySQL CLI TSV 解析：长文本字段中的换行不再被拆成假结果行。
-- `major_lookup` 已加入第一版内置常用简称保护，例如“计科”优先命中“计算机科学与技术”；完整别名表、候选沉淀和人工确认流程仍待落地。
+- 修复录取历史表与学校表的关联键：`edu_school_admission_stats.school_id` 应按 `edu_university.code + name` 关联，不能按内部 `edu_university.school_id` 关联。
+- `major_lookup` 的常用简称已经从代码内置迁入数据库确认别名表 `entity_aliases`，例如“计科”优先命中“计算机科学与技术”；短简称不再直接走危险模糊匹配。
+- `rank_to_school_match` 已能按分数或位次返回学校层面的冲/稳/保参考。
+- `rank_to_major_match` 已能按分数或位次 + 专业偏好返回学校-专业行层面的冲/稳/保参考。
+
+### 1.1 工具完成状态
+
+正式已完成：
+
+```text
+school_lookup
+major_lookup
+school_profile
+major_profile
+school_major_list
+major_school_list
+school_major_profile
+score_to_rank
+rank_to_school_match
+rank_to_major_match
+admission_history
+data_gap_detection
+```
+
+提前完成：
+
+```text
+major_market_reference
+civil_service_role_search
+```
+
+部分完成，但还不是正式结论型工具：
+
+```text
+transfer_policy_lookup
+civil_service_mapping
+```
+
+仍待制作：
+
+```text
+specialty_group_lookup
+plan_history
+subject_requirement_lookup
+school_department_major_list
+specialty_group_risk
+comparison_query
+employment_summary
+source_trace_lookup
+major_streaming_policy_lookup
+fee_and_campus_lookup
+policy_rule_lookup
+```
+
+当前验证：
+
+- 单元测试：`python -m unittest discover -s tests` 最近一次为 79 个测试通过。
+- 烟测矩阵：覆盖 14 个工具入口。
+- 真实库抽样：`major_lookup`、`rank_to_school_match`、`rank_to_major_match` 已验证过可跑通。
 
 ### 2. rysxai 专业市场数据
 
@@ -91,9 +151,16 @@ data_gap_detection
 - `gaokao-zhiyuan-projects/`
 - `docs/superpowers/`
 
+当前工作区还存在未提交的实验性文件，暂未纳入主干状态：
+
+- `.env.example`
+- `scripts/deepseek_retrieval_agent.py`
+- `tests/test_deepseek_retrieval_agent.py`
+
 ## 下一步建议
 
-1. 将 `major_lookup` 的内置简称升级为正式专业别名表，继续避免短词 `LIKE` 误命中。
-2. 把转专业政策数据接入正式检索表，并实现 `transfer_policy_lookup`。
-3. 增加 `source_trace_lookup`，让每个回答能解释来源表、字段和可信等级。
-4. 把 smoke case 输出沉淀为可读汇总，而不是提交临时 JSON 运行结果。
+1. 先实现 `specialty_group_lookup`：查询专业组、组内专业、选科要求、计划数和调剂口径。
+2. 再实现 `subject_requirement_lookup`：把选科要求从专业组/招生计划中抽成独立工具。
+3. 再实现 `specialty_group_risk`：基于组内专业构成做调剂风险初筛，但不声称真实分流比例。
+4. 然后实现 `transfer_policy_lookup`：把已入库的 rysxai 转专业线索接入正式检索工具，并明确第三方线索口径。
+5. 最后审查未提交的 DeepSeek agent 草稿，再决定是否纳入主干自然语言总入口。

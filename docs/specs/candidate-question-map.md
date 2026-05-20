@@ -72,6 +72,34 @@
 | `transfer_policy_lookup` | 转专业政策 | C |
 | `major_streaming_policy_lookup` | 大类分流政策和比例 | C |
 
+## 当前实现状态
+
+截至 2026-05-20，已有 14 个底层能力进入正式 function call 注册表，可以由后续 agent 自动调用：
+
+```text
+school_lookup
+major_lookup
+school_profile
+major_profile
+school_major_list
+major_school_list
+school_major_profile
+score_to_rank
+rank_to_school_match
+rank_to_major_match
+admission_history
+major_market_reference
+civil_service_role_search
+data_gap_detection
+```
+
+其中：
+
+- `rank_to_major_match` 已完成第一版，可以支撑“某省某科类某分数/位次想学某专业，能看哪些学校专业”的问题。
+- `major_market_reference` 和 `civil_service_role_search` 属于提前完成能力，能读取已接入的市场样本和考公岗位样本，但仍必须保留数据口径提示。
+- `transfer_policy_lookup` 与 `civil_service_mapping` 处于部分完成状态：底层数据或样本已经接入，但正式检索工具、人工确认和可报判定还没有完成。
+- `specialty_group_lookup`、`subject_requirement_lookup`、`specialty_group_risk` 仍是下一阶段最关键的待制作工具，因为它们直接影响专业组、调剂和选科类问题。
+
 ## 考生问题总分类
 
 ### 1. 学校认知类
