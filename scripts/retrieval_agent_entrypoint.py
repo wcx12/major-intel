@@ -47,7 +47,7 @@ DeepSeekAgentFactory = Callable[[], Any]
 
 
 RULE_TERMINAL_STATUSES = {"ok", "partial", "not_found", "needs_clarification", "planned"}
-LLM_FALLBACK_INTENTS = {"unknown", "comparison_query"}
+LLM_FALLBACK_INTENTS = {"unknown"}
 
 
 class HybridRetrievalEntryPoint:

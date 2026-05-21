@@ -115,7 +115,7 @@ class NaturalLanguageEntryPointTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["intent"], "school_major_list")
-        self.assertEqual(dispatcher.calls, [("school_major_list", {"school_text": "杭电", "limit": 50})])
+        self.assertEqual(dispatcher.calls, [("school_major_list", {"school_text": "杭州电子科技大学", "limit": 50})])
 
     def test_school_major_profile_uses_multiple_supporting_tools(self):
         from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
@@ -127,13 +127,13 @@ class NaturalLanguageEntryPointTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["intent"], "school_major_profile")
-        self.assertEqual(result["slots"]["school_text"], "杭电")
+        self.assertEqual(result["slots"]["school_text"], "杭州电子科技大学")
         self.assertEqual(result["slots"]["major_text"], "计算机")
         self.assertEqual(
             [tool_name for tool_name, _ in dispatcher.calls],
             ["school_major_profile", "employment_summary", "admission_history", "data_gap_detection"],
         )
-        self.assertEqual(dispatcher.calls[0][1], {"school_text": "杭电", "major_text": "计算机"})
+        self.assertEqual(dispatcher.calls[0][1], {"school_text": "杭州电子科技大学", "major_text": "计算机"})
         self.assertIn("校专业级就业事实", result["data_gaps"])
 
     def test_civil_service_question_uses_sample_search_as_partial_mapping(self):
@@ -161,6 +161,31 @@ class NaturalLanguageEntryPointTests(unittest.TestCase):
         self.assertEqual(result["intent"], "specialty_group_risk")
         self.assertEqual(result["needs_clarification"], ["school_text", "province", "year", "group_code"])
         self.assertEqual(dispatcher.calls, [])
+
+    def test_school_comparison_question_routes_to_comparison_query(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("杭电和浙大怎么选？")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intent"], "comparison_query")
+        self.assertEqual(result["slots"]["comparison_targets"], ["杭州电子科技大学", "浙江大学"])
+        self.assertEqual(
+            dispatcher.calls,
+            [
+                (
+                    "comparison_query",
+                    {
+                        "target_type": "school",
+                        "target_texts": ["杭州电子科技大学", "浙江大学"],
+                        "limit": 10,
+                    },
+                )
+            ],
+        )
 
     def test_session_context_can_supply_missing_score_match_slots(self):
         from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint

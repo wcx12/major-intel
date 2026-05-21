@@ -69,7 +69,7 @@
 
 ### 当前已落地能力快照
 
-截至 2026-05-20，当前已经落地 23 个可调用检索入口：
+截至 2026-05-21，当前已经落地 24 个可调用检索入口：
 
 ```text
 school_lookup
@@ -91,6 +91,7 @@ source_trace_lookup
 transfer_policy_lookup
 fee_and_campus_lookup
 specialty_group_risk
+comparison_query
 admission_history
 major_market_reference
 civil_service_role_search
@@ -109,6 +110,7 @@ data_gap_detection
 - 能按分数或位次 + 专业偏好返回学校-专业行层面的冲/稳/保参考，并保留专业大类、试验班、方向等变体提示。
 - 能查询招生专业组、组内专业、选科要求，并基于组内构成做调剂风险初筛；明确不等于真实分流比例。
 - 能查询学校院系专业关系、招生计划历史、学校级就业/升学摘要、转专业政策线索、学费线索和来源可信度说明。
+- 能对学校、专业、学校-专业方案做第一版结构化并列对比，但不会直接替用户下最终选择。
 - 能读取已接入的专业市场样本和考公岗位样本。
 - 能识别当前问题还缺哪些本地数据，避免 agent 编造。
 
@@ -139,10 +141,10 @@ data_gap_detection
 | 2 | `subject_requirement_lookup` | P1 | 查选科要求 | A/B | 已完成 | 从专业组样本抽取去重选科要求，并保留原始记录 |
 | 2 | `school_department_major_list` | P1 | 查院系和院系下专业 | A | 已完成 | 读取院系与院系专业表；不等于某省招生计划 |
 | 3 | `specialty_group_risk` | P0 | 专业组调剂风险初筛 | B | 已完成 | 基于组内专业数量、计划数和目标专业占比初筛；真实分流比例仍列缺口 |
-| 3 | `comparison_query` | P1 | 学校/专业/方案对比 | B | 待制作 | 需要复用已有画像工具组合 |
+| 3 | `comparison_query` | P1 | 学校/专业/方案对比 | B | 已完成 | 第一版复用画像、录取、就业和市场样本工具做结构化并列；不直接给最终选择 |
 | 3 | `employment_summary` | P1 | 学校级就业升学摘要 | B | 已完成 | 学校级摘要已独立成工具；不能代表校专业级就业 |
 | 3 | `major_market_reference` | P1 | 专业通用市场参考 | B | 提前完成 | 已接入 rysxai 市场样本表；明确不是校专业就业 |
-| 3 | `source_trace_lookup` | P1 | 解释数据来源和可信度 | B/C | 已完成 | 已登记 23 个正式工具的数据表、口径和可信度等级 |
+| 3 | `source_trace_lookup` | P1 | 解释数据来源和可信度 | B/C | 已完成 | 已登记 24 个正式工具的数据表、口径和可信度等级 |
 | 4 | `transfer_policy_lookup` | P1 | 查转专业政策 | C | 已完成 | 已接入 `rysxai_transfer_policies`；第三方线索必须官方复核 |
 | 4 | `major_streaming_policy_lookup` | P1 | 查大类分流政策和比例 | C | 待制作 | 需要新增或确认分流比例数据源 |
 | 4 | `civil_service_role_search` | P1 | 专业到考公岗位样本检索 | C | 提前完成 | 已接入考公岗位样本；仅表示岗位文本命中，不等于最终可报 |
@@ -152,7 +154,6 @@ data_gap_detection
 
 未完成工具摘要：
 
-- 第三阶段还缺 `comparison_query`。
 - 第四阶段还缺 `major_streaming_policy_lookup`、`policy_rule_lookup`。
 - `civil_service_mapping` 不是从零开始，但还没有达到正式可调用工具标准；当前只有 `civil_service_role_search` 样本检索。
 
@@ -753,6 +754,8 @@ edu_university_department_major
 
 把两个或多个对象拆成维度对比，例如学校层次、城市、专业实力、录取风险、就业升学、费用、数据缺口。
 
+当前实现状态：已完成第一版。支持 `school`、`major`、`school_major` 三类对比对象，复用已有画像/录取/就业/市场样本工具，返回结构化并列结果、来源口径、缺口和 warnings；不直接替用户下最终选择。
+
 ### `employment_summary`
 
 输出学校级就业升学摘要。
@@ -909,7 +912,7 @@ data_gap_detection
 
 - 第一阶段 10 个 P0 工具已经全部实现。
 - 第二阶段 `rank_to_school_match`、`rank_to_major_match`、`specialty_group_lookup`、`plan_history`、`subject_requirement_lookup`、`school_department_major_list` 已完成第一版，可覆盖位次匹配、专业组、招生计划、选科和院系专业关系。
-- 第三阶段 `specialty_group_risk`、`employment_summary`、`major_market_reference`、`source_trace_lookup` 已完成第一版；`comparison_query` 仍待制作。
+- 第三阶段 `specialty_group_risk`、`comparison_query`、`employment_summary`、`major_market_reference`、`source_trace_lookup` 已完成第一版。
 - 第四阶段 `transfer_policy_lookup`、`fee_and_campus_lookup` 已完成第一版；`major_streaming_policy_lookup`、`policy_rule_lookup` 仍待制作；`civil_service_mapping` 仍是部分完成。
 - `major_market_reference` 和 `civil_service_role_search` 已经提前实现，用于读取已经接入的市场样本和考公岗位样本。
 - 已完成 agent function schema 注册层：`scripts/retrieval_function_registry.py`。
@@ -921,8 +924,8 @@ data_gap_detection
 - 已完成数据库别名初始化脚本：`scripts/setup_entity_aliases.py`，会创建/维护 `entity_aliases` 与 `entity_alias_candidates`。
 - 已修复 MySQL CLI 长文本换行解析问题，`major_lookup` 不会再把专业介绍里的“关键词/课程列表”拆成假候选记录。
 - 已完成 `major_lookup` 数据库别名解析，真实库验证“计科”返回“计算机科学与技术”，“软工”返回“软件工程”。
-- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 115 个测试通过；自然语言入口专项测试为 10 个场景，统一入口专项测试为 8 个场景，缓存/日志/缺口队列专项测试为 5 个场景。
-- 当前烟测用例矩阵覆盖 23 个工具入口；完整真实库结构烟测 290/290 通过，新增 9 个工具 strict-target 烟测 27/27 通过且质量预期 0 miss。
+- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 118 个测试通过；自然语言入口专项测试为 11 个场景，统一入口专项测试为 9 个场景，缓存/日志/缺口队列专项测试为 5 个场景。
+- 当前烟测用例矩阵已覆盖上一轮 23 个工具入口；`comparison_query` 真实库 smoke 仍待补进批量矩阵。
 
 第一阶段完成时应满足：
 

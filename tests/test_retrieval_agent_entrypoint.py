@@ -177,11 +177,11 @@ class HybridRetrievalEntryPointTests(unittest.TestCase):
         from scripts.retrieval_agent_entrypoint import HybridRetrievalEntryPoint
 
         rule_result = {
-            "status": "data_gap",
+            "status": "ok",
             "intent": "comparison_query",
-            "tool_plan": [],
+            "tool_plan": [{"tool_name": "comparison_query", "arguments": {"target_type": "school", "target_texts": ["杭电", "浙大"]}}],
             "tool_trace": [],
-            "answer_markdown": "规则入口无法处理对比。",
+            "answer_markdown": "结构化对比结果。",
         }
         result = HybridRetrievalEntryPoint(
             rule_entrypoint=FakeRuleEntryPoint(rule_result),
@@ -190,6 +190,32 @@ class HybridRetrievalEntryPointTests(unittest.TestCase):
 
         self.assertEqual(result["route"], "rules")
         self.assertEqual(result["intent"], "comparison_query")
+
+    def test_auto_mode_keeps_implemented_comparison_query_in_rules(self):
+        from scripts.retrieval_agent_entrypoint import HybridRetrievalEntryPoint
+
+        rule_result = {
+            "status": "ok",
+            "intent": "comparison_query",
+            "tool_plan": [{"tool_name": "comparison_query", "arguments": {"target_type": "school", "target_texts": ["杭电", "浙大"]}}],
+            "tool_trace": [
+                {
+                    "tool_name": "comparison_query",
+                    "arguments": {"target_type": "school", "target_texts": ["杭电", "浙大"]},
+                    "result": {"status": "ok", "warnings": [], "scope_notes": [], "data_gaps": []},
+                }
+            ],
+            "answer_markdown": "结构化对比结果。",
+        }
+
+        result = HybridRetrievalEntryPoint(
+            rule_entrypoint=FakeRuleEntryPoint(rule_result),
+            deepseek_agent_factory=lambda: (_ for _ in ()).throw(AssertionError("should not call DeepSeek")),
+        ).run("杭电和浙大怎么选？")
+
+        self.assertEqual(result["route"], "rules")
+        self.assertEqual(result["intent"], "comparison_query")
+        self.assertEqual(result["answer_markdown"], "结构化对比结果。")
 
     def test_storage_records_cache_logs_and_tool_traces_on_miss(self):
         from scripts.retrieval_agent_entrypoint import HybridRetrievalEntryPoint

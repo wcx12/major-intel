@@ -317,6 +317,25 @@ _FUNCTION_SCHEMAS: dict[str, dict[str, Any]] = {
             ["school_text"],
         ),
     ),
+    "comparison_query": _function_schema(
+        "comparison_query",
+        "对学校、专业或学校-专业方案做结构化并列对比。第一版只整理证据、口径和缺口，不替用户直接下最终选择。",
+        _object_schema(
+            {
+                "target_type": _string("对比对象类型：school、major 或 school_major。"),
+                "target_texts": _string_array("需要对比的对象文本，至少两个。例如 ['杭州电子科技大学','浙江大学'] 或 ['计算机','软件工程']。"),
+                "major_text": _string("可选；当比较多个学校的同一专业时填写，例如 计算机。"),
+                "province": _string("可选，考生所在省份；用于录取历史或专业组上下文。"),
+                "subject_type": _string("可选，科类，例如 物理、历史、综合。"),
+                "score": _number("可选，高考分数；第一版只作为后续位次匹配上下文。"),
+                "rank": _integer("可选，考生位次。"),
+                "year": _integer("可选，参考年份。", minimum=2000, maximum=2100),
+                "dimensions": _string_array("可选，希望重点对比的维度，例如 录取、就业、城市、转专业。"),
+                "limit": _integer("最多对比多少个对象。", minimum=2, maximum=10),
+            },
+            ["target_type", "target_texts"],
+        ),
+    ),
     "admission_history": _function_schema(
         "admission_history",
         "查询学校、专业、省份、科类、年份条件下的历史录取记录。历史录取不代表未来保证。",

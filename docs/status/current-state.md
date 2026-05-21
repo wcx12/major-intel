@@ -6,7 +6,7 @@
 
 ### 1. 本地检索与 function call 层
 
-当前已落地 23 个正式可调用检索入口：
+当前已落地 24 个正式可调用检索入口：
 
 ```text
 school_lookup
@@ -28,6 +28,7 @@ source_trace_lookup
 transfer_policy_lookup
 fee_and_campus_lookup
 specialty_group_risk
+comparison_query
 admission_history
 major_market_reference
 civil_service_role_search
@@ -53,6 +54,7 @@ data_gap_detection
 - `major_lookup` 的常用简称已经从代码内置迁入数据库确认别名表 `entity_aliases`，例如“计科”优先命中“计算机科学与技术”；短简称不再直接走危险模糊匹配。
 - `rank_to_school_match` 已能按分数或位次返回学校层面的冲/稳/保参考。
 - `rank_to_major_match` 已能按分数或位次 + 专业偏好返回学校-专业行层面的冲/稳/保参考。
+- `comparison_query` 已能对学校、专业、学校-专业方案做第一版结构化并列对比，不直接替用户下最终选择。
 - 自然语言总入口已完成离线规则第一版：支持工具自动选择、缺槽追问、多工具编排、结果口径聚合和 `--no-execute` 纯计划模式。
 - DeepSeek LLM function-call agent 已有实现，并已通过统一入口接入：高频明确问题优先走规则入口，复杂/未知问题交给 DeepSeek 自动选择工具。
 - 统一入口已接入第一版 MySQL 运营存储：`query_logs`、`retrieval_cache`、`agent_tool_traces`、`data_gap_queue`，通过 `--enable-storage` 开启。
@@ -83,6 +85,7 @@ source_trace_lookup
 transfer_policy_lookup
 fee_and_campus_lookup
 specialty_group_risk
+comparison_query
 admission_history
 data_gap_detection
 ```
@@ -103,15 +106,14 @@ civil_service_mapping
 仍待制作：
 
 ```text
-comparison_query
 major_streaming_policy_lookup
 policy_rule_lookup
 ```
 
 当前验证：
 
-- 单元测试：`python -m unittest discover -s tests` 最近一次为 112 个测试通过，其中自然语言入口专项测试覆盖 10 个场景，统一入口专项测试覆盖 7 个场景，缓存/日志专项测试覆盖 3 个场景。
-- 烟测矩阵：覆盖 23 个工具入口；完整真实库结构烟测 290/290 通过。新增 9 个工具的真实库 strict-target 烟测为 27/27 通过，质量预期 0 miss。
+- 单元测试：`python -m unittest discover -s tests` 最近一次为 118 个测试通过，其中自然语言入口专项测试覆盖 11 个场景，统一入口专项测试覆盖 9 个场景，缓存/日志/缺口队列专项测试覆盖 5 个场景。
+- 烟测矩阵：已覆盖上一轮 23 个工具入口；`comparison_query` 真实库 smoke 仍待补进批量矩阵。
 - 真实库抽样：`specialty_group_lookup`、`fee_and_campus_lookup`、`transfer_policy_lookup`、`rank_to_major_match` 等已验证可跑通。
 
 ### 1.2 原始需求完成度
@@ -126,7 +128,7 @@ policy_rule_lookup
 | 覆盖多数高校，尤其 211 以下中等学校 | 部分完成 | 工具层已经完全基于本地 MySQL，可覆盖库里已有学校和专业；`school_lookup`、`major_lookup`、列表类工具可通用查询 | 覆盖率取决于本地表实际数据完整度；还没有做覆盖率报告和缺口优先级排序 |
 | 就业情况：工作地域分布、工资分布、Top 10 对口公司、考公对口岗位 | 部分完成 | `employment_summary` 有学校级就业/升学摘要；`major_market_reference` 有专业通用市场样本；`civil_service_role_search` 有考公岗位文本命中样本 | 校专业级地域/工资/公司 Top 10 仍缺；`civil_service_mapping` 尚未做到正式可报判定 |
 | 动态 RAG：学生提问时搜索、缓存、入库，不命中再 AI 搜索，搜不到不编，后台抛给人工 | 部分完成 | 已有 function schema、工具层、`source_trace_lookup`、`data_gap_detection`、自然语言规则入口、DeepSeek tool-call agent、统一入口、查询缓存/日志表和 `data_gap_queue` 第一版入队 | 联网搜索 agent、抽取校验、人工复核和写回闭环还没正式落地 |
-| 学生可能问题的检索总入口和 function call 自动选择 | 第一版已完成 | 已新增 `scripts/natural_language_entrypoint.py`、`scripts/deepseek_retrieval_agent.py`、`scripts/retrieval_agent_entrypoint.py`、`scripts/agent_query_storage.py`；能做规则优先路由、复杂问题 LLM tool-call、缺槽追问、工具计划生成、多工具编排、结果口径聚合、缓存、查询日志和缺口入队；23 个底层 function call 工具已注册 | 还没有接入联网搜索 agent 和人工复核处理流 |
+| 学生可能问题的检索总入口和 function call 自动选择 | 第一版已完成 | 已新增 `scripts/natural_language_entrypoint.py`、`scripts/deepseek_retrieval_agent.py`、`scripts/retrieval_agent_entrypoint.py`、`scripts/agent_query_storage.py`；能做规则优先路由、复杂问题 LLM tool-call、缺槽追问、工具计划生成、多工具编排、结构化对比、结果口径聚合、缓存、查询日志和缺口入队；24 个底层 function call 工具已注册 | 还没有接入联网搜索 agent 和人工复核处理流 |
 
 ### 1.3 当前最重要的缺口
 
@@ -206,8 +208,8 @@ policy_rule_lookup
 
 ## 下一步建议
 
-1. 实现 `comparison_query`：复用已有画像、录取、专业组和就业工具，先做结构化对比结果。
-2. 设计 `major_streaming_policy_lookup` 的数据入口：真实分流比例和冷门专业比例目前仍缺可靠来源。
-3. 将 `civil_service_role_search` 升级为 `civil_service_mapping`：区分“文本命中样本”和“正式可报判定”。
-4. 设计 `policy_rule_lookup`：招生章程、批次规则、特殊限制需要联网 agent + 人工确认后入库。
-5. 让 `data_gap_queue` 接入联网找源、抽取、校验、人工复核和写回流程。
+1. 设计 `major_streaming_policy_lookup` 的数据入口：真实分流比例和冷门专业比例目前仍缺可靠来源。
+2. 将 `civil_service_role_search` 升级为 `civil_service_mapping`：区分“文本命中样本”和“正式可报判定”。
+3. 设计 `policy_rule_lookup`：招生章程、批次规则、特殊限制需要联网 agent + 人工确认后入库。
+4. 让 `data_gap_queue` 接入联网找源、抽取、校验、人工复核和写回流程。
+5. 把 `comparison_query` 加入真实库批量 smoke 矩阵，并继续增强复杂志愿方案解析。

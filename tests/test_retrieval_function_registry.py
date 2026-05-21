@@ -27,6 +27,7 @@ EXPECTED_FUNCTION_NAMES = {
     "transfer_policy_lookup",
     "fee_and_campus_lookup",
     "specialty_group_risk",
+    "comparison_query",
     "admission_history",
     "major_market_reference",
     "civil_service_role_search",
@@ -163,6 +164,43 @@ class FakeRetrievalTools:
             data={"buckets": {"rush": [], "stable": [], "safe": []}},
         )
 
+    def comparison_query(
+        self,
+        target_type,
+        target_texts,
+        major_text=None,
+        province=None,
+        subject_type=None,
+        score=None,
+        rank=None,
+        year=None,
+        dimensions=None,
+        limit=10,
+    ):
+        self.calls.append(
+            (
+                "comparison_query",
+                {
+                    "target_type": target_type,
+                    "target_texts": target_texts,
+                    "major_text": major_text,
+                    "province": province,
+                    "subject_type": subject_type,
+                    "score": score,
+                    "rank": rank,
+                    "year": year,
+                    "dimensions": dimensions,
+                    "limit": limit,
+                },
+            )
+        )
+        return tool_result(
+            "comparison_query",
+            "ok",
+            {"target_type": target_type, "target_texts": target_texts},
+            data={"targets": [{"target_text": text} for text in target_texts]},
+        )
+
 
 class RetrievalFunctionRegistryTests(unittest.TestCase):
     def test_schema_exports_every_first_batch_retrieval_function(self):
@@ -195,6 +233,7 @@ class RetrievalFunctionRegistryTests(unittest.TestCase):
         group_schema = schema_for_tool("specialty_group_lookup")["function"]["parameters"]
         transfer_schema = schema_for_tool("transfer_policy_lookup")["function"]["parameters"]
         profile_schema = schema_for_tool("school_major_profile")["function"]["parameters"]
+        comparison_schema = schema_for_tool("comparison_query")["function"]["parameters"]
 
         self.assertEqual(score_schema["required"], ["province", "subject_type", "score"])
         self.assertEqual(match_schema["required"], ["province"])
@@ -202,6 +241,7 @@ class RetrievalFunctionRegistryTests(unittest.TestCase):
         self.assertEqual(group_schema["required"], ["school_text"])
         self.assertEqual(transfer_schema["required"], ["school_text"])
         self.assertEqual(profile_schema["required"], ["school_text", "major_text"])
+        self.assertEqual(comparison_schema["required"], ["target_type", "target_texts"])
 
     def test_dispatcher_calls_named_tool_with_arguments(self):
         from scripts.retrieval_function_registry import call_retrieval_function

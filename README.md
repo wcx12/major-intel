@@ -11,7 +11,7 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 当前已经完成：
 
 - 本地 MySQL 检索工具层。
-- 23 个正式 function call schema 与 dispatcher。
+- 24 个正式 function call schema 与 dispatcher。
 - DeepSeek function-call agent。
 - 离线规则自然语言入口。
 - 统一 agent 入口，能在规则入口和 DeepSeek agent 之间自动协调。
@@ -20,7 +20,6 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 
 当前仍未完成：
 
-- `comparison_query`：学校/专业/方案对比工具。
 - `major_streaming_policy_lookup`：大类分流政策、分流比例、冷门专业比例工具。
 - `policy_rule_lookup`：招生章程、批次规则、身体限制、单科要求等政策工具。
 - `civil_service_mapping`：从“岗位文本命中样本”升级为“正式可报条件判定”。
@@ -63,7 +62,7 @@ docs/specs/                            设计文档、工具规划、数据接�
 docs/status/current-state.md           当前状态快照
 
 scripts/local_retrieval_mvp.py         最早的本地检索 CLI MVP
-scripts/retrieval_tools.py             23 个底层检索工具的真实实现
+scripts/retrieval_tools.py             24 个底层检索工具的真实实现
 scripts/retrieval_function_registry.py function schema 注册与 dispatcher
 scripts/natural_language_entrypoint.py 离线规则自然语言入口
 scripts/deepseek_retrieval_agent.py    DeepSeek function-call agent
@@ -97,7 +96,7 @@ $env:GAOKAO_DB_PASSWORD = "<你的本地密码>"
 
 ## 已完成的正式 Function Call
 
-当前正式注册并可被 agent 调用的 function call 一共 23 个。注册入口是 [scripts/retrieval_function_registry.py](scripts/retrieval_function_registry.py)，真实实现是 [scripts/retrieval_tools.py](scripts/retrieval_tools.py)。
+当前正式注册并可被 agent 调用的 function call 一共 24 个。注册入口是 [scripts/retrieval_function_registry.py](scripts/retrieval_function_registry.py)，真实实现是 [scripts/retrieval_tools.py](scripts/retrieval_tools.py)。
 
 | 工具 | 作用 | 当前口径 |
 |---|---|---|
@@ -120,6 +119,7 @@ $env:GAOKAO_DB_PASSWORD = "<你的本地密码>"
 | `transfer_policy_lookup` | 查询转专业政策线索 | 第三方线索，需官方复核 |
 | `fee_and_campus_lookup` | 查询学费、校区、住宿线索 | 校区字段不稳定时会返回缺口 |
 | `specialty_group_risk` | 专业组调剂风险初筛 | 基于组内构成，非真实分流比例 |
+| `comparison_query` | 学校/专业/方案结构化对比 | 只做并列证据，不直接替用户下最终选择 |
 | `admission_history` | 历年录取分和位次 | 历史参考，不保证未来 |
 | `major_market_reference` | 专业通用市场样本 | 第三方招聘/薪资样本，不是校专业就业 |
 | `civil_service_role_search` | 考公岗位文本命中样本 | 命中不等于正式可报 |
@@ -127,10 +127,10 @@ $env:GAOKAO_DB_PASSWORD = "<你的本地密码>"
 
 审计结果：
 
-- 23 个 schema 全部有同名 `RetrievalTools` 方法。
+- 24 个 schema 全部有同名 `RetrievalTools` 方法。
 - 没有“schema 已注册但底层方法缺失”的工具。
 - 没有“底层公开方法已实现但未注册给 agent”的工具。
-- DeepSeek agent 默认通过 `get_function_schemas()` 获取完整 23 个 schema。
+- DeepSeek agent 默认通过 `get_function_schemas()` 获取完整 24 个 schema。
 - DeepSeek agent 工具执行统一走 `call_retrieval_function()`，会做参数校验、未知工具拦截和缺槽提示。
 
 ## 还没做成正式工具的能力
@@ -139,14 +139,13 @@ $env:GAOKAO_DB_PASSWORD = "<你的本地密码>"
 
 | 能力 | 当前状态 | 后续做法 |
 |---|---|---|
-| `comparison_query` | 未制作 | 复用学校画像、专业画像、录取历史、专业组、就业摘要，先输出结构化对比 |
 | `major_streaming_policy_lookup` | 未制作 | 需要新增真实分流政策/比例数据源，缺官方来源时进缺口队列 |
 | `policy_rule_lookup` | 未制作 | 需要联网/人工确认招生章程、批次规则、身体限制、单科要求 |
 | `civil_service_mapping` | 部分完成 | 当前只有 `civil_service_role_search` 样本检索；后续要做专业代码、学历、学位、岗位条件的正式判定 |
 
 所以当前结论是：
 
-- 接口层：23 个正式 function call 已闭环。
+- 接口层：24 个正式 function call 已闭环。
 - agent 调用层：已能调用全部正式 function call。
 - 业务能力层：还有高级工具和证据链没有完成。
 
@@ -282,7 +281,7 @@ python scripts/retrieval_function_registry.py call --tool major_lookup --argumen
 
 ```powershell
 python scripts/retrieval_tools.py major_lookup --major "计科"
-python scripts/retrieval_tools.py school_major_list --school "杭电"
+python scripts/retrieval_tools.py school_major_list --school "杭州电子科技大学"
 python scripts/retrieval_tools.py rank_to_major_match --province "广东" --subject-type "物理" --score 580 --major "计算机"
 ```
 
@@ -305,7 +304,7 @@ OK
 专项覆盖：
 
 - function registry 与 dispatcher。
-- 23 个底层检索工具。
+- 24 个底层检索工具。
 - DeepSeek function-call loop。
 - 离线规则自然语言入口。
 - 统一 agent 入口。
@@ -354,15 +353,20 @@ OK
 - 抽取结果的人工复核、冲突处理和写回事实表。
 - 对校专业级就业、官网专业介绍、官方转专业政策、真实分流比例、招生章程规则做稳定事实库。
 
-### 第 2 步：实现 `comparison_query`
+### 第 2 步：实现 `comparison_query`（已完成第一版）
 
 目标：支持“杭电和浙大怎么选”“A 专业和 B 专业怎么比”“两个志愿方案哪个更稳”。
 
-第一版做法：
+已完成：
 
 - 先做结构化对比，不直接输出主观结论。
 - 可复用 `school_profile`、`major_profile`、`school_major_profile`、`admission_history`、`employment_summary`。
 - 缺少目标、省份、科类、分数/位次时返回 `needs_clarification`。
+
+仍未完成：
+
+- 对“两个完整志愿方案”的复杂解析仍需要后续增强。
+- 还没有把用户偏好权重、城市偏好、家庭约束等纳入排序模型。
 
 ### 第 3 步：设计并实现 `major_streaming_policy_lookup`
 

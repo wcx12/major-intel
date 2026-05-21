@@ -75,12 +75,12 @@ SCHOOL_ALIASES = {
     # This list is not meant to replace `school_lookup`.  It only gives the
     # offline router enough signal to decide which tool to call before the real
     # entity resolver normalizes the school.
-    "杭电": "杭电",
-    "浙大": "浙大",
-    "北交": "北交",
-    "北交大": "北交大",
-    "央民": "央民",
-    "海大": "海大",
+    "杭电": "杭州电子科技大学",
+    "浙大": "浙江大学",
+    "北交": "北京交通大学",
+    "北交大": "北京交通大学",
+    "央民": "中央民族大学",
+    "海大": "中国海洋大学",
 }
 
 
@@ -117,6 +117,7 @@ INTENT_TOOL = {
     "specialty_group_lookup": "specialty_group_lookup",
     "subject_requirement_lookup": "subject_requirement_lookup",
     "specialty_group_risk": "specialty_group_risk",
+    "comparison_query": "comparison_query",
     "school_department_major_list": "school_department_major_list",
     "employment_summary": "employment_summary",
     "transfer_policy_lookup": "transfer_policy_lookup",
@@ -270,6 +271,10 @@ def _extract_slots(question: str) -> dict[str, Any]:
     if major_text:
         slots["major_text"] = major_text
 
+    comparison_slots = _extract_comparison_slots(question)
+    if comparison_slots:
+        slots.update(comparison_slots)
+
     if "稳" in question:
         slots["risk_preference"] = "稳"
     elif "冲" in question:
@@ -296,6 +301,60 @@ def _extract_major_text(question: str) -> str | None:
         if major in question:
             return major
     return None
+
+
+def _extract_comparison_slots(question: str) -> dict[str, Any]:
+    """Extract obvious A/B comparison targets without doing fuzzy guessing.
+
+    这里只识别非常明确的“甲和乙”“甲还是乙”“对比甲乙”场景。真正实体归一
+    仍交给底层 `comparison_query` 复用的 school/major lookup 工具完成。
+    """
+
+    if not any(marker in question for marker in ["对比", "哪个好", "怎么选", "比一比", "还是", " 和 ", "和", "vs", "VS"]):
+        return {}
+
+    school_targets = _ordered_alias_hits(question, SCHOOL_ALIASES)
+    if len(school_targets) >= 2:
+        return {"target_type": "school", "comparison_targets": school_targets}
+
+    major_targets = _ordered_literal_hits(question, MAJOR_ALIASES)
+    if len(major_targets) >= 2:
+        return {"target_type": "major", "comparison_targets": major_targets}
+
+    return {}
+
+
+def _ordered_alias_hits(question: str, aliases: dict[str, str]) -> list[str]:
+    """Return alias hits ordered by where they appear in the question."""
+
+    hits: list[tuple[int, int, str]] = []
+    for alias, canonical in aliases.items():
+        index = question.find(alias)
+        if index >= 0:
+            hits.append((index, -len(alias), canonical))
+    return _distinct_preserving_order(value for _, _, value in sorted(hits))
+
+
+def _ordered_literal_hits(question: str, values: list[str]) -> list[str]:
+    """Return literal value hits ordered by position, preferring longer names."""
+
+    hits: list[tuple[int, int, str]] = []
+    for value in values:
+        index = question.find(value)
+        if index >= 0:
+            hits.append((index, -len(value), value))
+    return _distinct_preserving_order(value for _, _, value in sorted(hits))
+
+
+def _distinct_preserving_order(values: Any) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value).strip()
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
+    return result
 
 
 def _merge_slots(extracted: dict[str, Any], session_context: dict[str, Any]) -> dict[str, Any]:
@@ -444,7 +503,13 @@ def _missing_required_slots(intent: str, slots: dict[str, Any]) -> list[str]:
         "civil_service_mapping": ["major_text"],
     }
     if intent == "comparison_query":
-        return ["comparison_targets"]
+        missing = []
+        if not slots.get("target_type"):
+            missing.append("target_type")
+        targets = slots.get("comparison_targets")
+        if not isinstance(targets, list) or len(targets) < 2:
+            missing.append("comparison_targets")
+        return missing
     if intent == "unknown":
         return ["intent"]
     return [slot for slot in required_by_intent.get(intent, []) if not slots.get(slot)]
@@ -534,7 +599,24 @@ def _build_tool_plan(intent: str, slots: dict[str, Any]) -> list[dict[str, Any]]
         return [_call("source_trace_lookup", {})]
 
     if intent == "comparison_query":
-        return []
+        return [
+            _call(
+                "comparison_query",
+                _compact_args(
+                    {
+                        "target_type": slots.get("target_type"),
+                        "target_texts": slots.get("comparison_targets"),
+                        "major_text": slots.get("major_text") if slots.get("target_type") != "major" else None,
+                        "province": slots.get("province"),
+                        "subject_type": slots.get("subject_type"),
+                        "score": slots.get("score"),
+                        "rank": slots.get("rank"),
+                        "year": slots.get("year"),
+                        "limit": 10,
+                    }
+                ),
+            )
+        ]
 
     tool_name = INTENT_TOOL.get(intent)
     if not tool_name:

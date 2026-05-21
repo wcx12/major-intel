@@ -13,7 +13,7 @@
 
 当前结论：
 
-- 23 个底层检索工具已经具备 function call schema 和 dispatcher。
+- 24 个底层检索工具已经具备 function call schema 和 dispatcher。
 - 自然语言总入口的详细设计从本文件开始作为主设计口径。
 - 离线规则入口已落地到 `scripts/natural_language_entrypoint.py`，并由 `tests/test_natural_language_entrypoint.py` 覆盖第一批高频场景。
 - DeepSeek function-call agent 已落地到 `scripts/deepseek_retrieval_agent.py`，统一入口已落地到 `scripts/retrieval_agent_entrypoint.py`。
@@ -214,7 +214,7 @@
 
 | Intent | 当前状态 | 第一版处理方式 |
 |---|---|---|
-| `comparison_query` | 工具未实现 | 可先用多工具组合临时生成对比，但应标为未正式工具 |
+| `comparison_query` | 已完成第一版 | 调用正式 `comparison_query`，返回学校/专业/校专业方案的结构化并列对比 |
 | `major_streaming_policy_lookup` | 工具未实现 | 返回 `data_gap`，写入分流政策缺口 |
 | `civil_service_mapping` | 只有样本检索 | 用 `civil_service_role_search` 返回岗位文本命中样本，明确不是可报判定 |
 | `policy_rule_lookup` | 工具未实现 | 返回 `data_gap`，等待联网 agent 或人工 |
@@ -269,7 +269,7 @@
 | `specialty_group_risk` | `school_text` | “请告诉我学校和专业组；如果没有专业组代码，请补充省份、科类、年份，我先帮你查组。” |
 | `transfer_policy_lookup` | `school_text` | “你想查哪所学校的转专业政策？” |
 | `fee_and_campus_lookup` | `school_text` | “你想查哪所学校？如果关心某专业，也请补充专业名。” |
-| `comparison_query` | `comparison_targets` | “你想比较哪几个学校、专业或方案？” |
+| `comparison_query` | `target_type`, `comparison_targets` | “你想比较哪几个学校、专业或方案？” |
 
 追问输出必须使用 `needs_clarification`，不能先猜一个省份、科类或年份继续查。
 
@@ -531,7 +531,7 @@ agent-cache-v1 + 规范化问题 + mode + route + intent + slots + tool_plan
 | 杭电能转专业吗？ | `transfer_policy_lookup` | `transfer_policy_lookup` | `ok` / `partial` / `not_found` |
 | 这个专业组会不会调剂到冷门？ | `specialty_group_risk` | 无，先追问 | `needs_clarification` |
 | 软件工程适合考公吗？ | `civil_service_mapping` | `civil_service_role_search` | `partial` |
-| A 和 B 怎么选？ | `comparison_query` | 无或组合工具 | `needs_clarification` |
+| A 和 B 怎么选？ | `comparison_query` | `comparison_query` | `ok` 或 `needs_clarification` |
 
 ## 实施分期
 

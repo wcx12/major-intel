@@ -204,6 +204,22 @@ _SOURCE_TRACE_REGISTRY = {
         "scope_notes": ["风险仅来自专业组构成初筛，不代表真实调剂概率或真实分流比例。"],
         "reliability": "B",
     },
+    "comparison_query": {
+        "source_tables": [
+            "edu_university",
+            "edu_major",
+            "entity_aliases",
+            "edu_school_major",
+            "edu_university_subject_eval",
+            "edu_dual_class",
+            "edu_university_employment",
+            "edu_school_admission_stats",
+            "rysxai_major_market_snapshots",
+            "rysxai_major_job_samples",
+        ],
+        "scope_notes": ["对比工具复用画像、录取、就业摘要和市场样本；第一版只做结构化并列，不直接替用户下最终选择。"],
+        "reliability": "B",
+    },
     "major_market_reference": {
         "source_tables": ["edu_major", "entity_aliases", "rysxai_major_market_snapshots", "rysxai_major_job_samples"],
         "scope_notes": ["专业市场参考来自第三方招聘样本，不代表学校毕业去向或官方薪资。"],
@@ -1469,6 +1485,212 @@ class RetrievalTools:
             source_tables=group_result["source_tables"],
         )
 
+    def comparison_query(
+        self,
+        target_type: str,
+        target_texts: list[str],
+        major_text: str | None = None,
+        province: str | None = None,
+        subject_type: str | None = None,
+        score: int | float | str | None = None,
+        rank: int | str | None = None,
+        year: int | None = None,
+        dimensions: list[str] | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Compare schools, majors, or school-major choices side by side.
+
+        第一版的目标是“把可比信息摆齐”，不是生成最终志愿决策。这里复用已
+        有工具的结果，保留每个支撑工具的 scope_notes / data_gaps / warnings，
+        让上层 agent 可以诚实说明哪些维度有数据、哪些维度只是缺口。
+        """
+
+        clean_targets = _distinct_texts(target_texts or [])
+        normalized_type = str(target_type or "").strip()
+        missing = []
+        if not normalized_type:
+            missing.append("target_type")
+        if len(clean_targets) < 2:
+            missing.append("target_texts")
+        if normalized_type == "school_major" and not major_text:
+            missing.append("major_text")
+        if missing:
+            return _needs(
+                "comparison_query",
+                {
+                    "target_type": target_type,
+                    "target_texts": target_texts,
+                    "major_text": major_text,
+                    "province": province,
+                    "subject_type": subject_type,
+                    "score": score,
+                    "rank": rank,
+                    "year": year,
+                    "dimensions": dimensions,
+                    "limit": limit,
+                },
+                missing,
+            )
+
+        if normalized_type not in {"school", "major", "school_major"}:
+            return tool_result(
+                "comparison_query",
+                "needs_clarification",
+                {
+                    "target_type": target_type,
+                    "target_texts": target_texts,
+                    "major_text": major_text,
+                    "province": province,
+                    "subject_type": subject_type,
+                    "score": score,
+                    "rank": rank,
+                    "year": year,
+                    "dimensions": dimensions,
+                    "limit": limit,
+                },
+                needs_clarification=["target_type"],
+                warnings=["target_type 仅支持 school、major、school_major。"],
+            )
+
+        targets = []
+        source_tables: list[str] = []
+        data_gaps: list[str] = []
+        warnings: list[str] = []
+        for target_text in clean_targets[: max(int(limit), 1)]:
+            supporting_results = self._comparison_supporting_results(
+                target_type=normalized_type,
+                target_text=target_text,
+                major_text=major_text,
+                province=province,
+                subject_type=subject_type,
+                score=score,
+                rank=rank,
+                year=year,
+            )
+            for result in supporting_results:
+                source_tables = _merge_source_tables(source_tables, result.get("source_tables") or [])
+                data_gaps.extend(result.get("data_gaps") or [])
+                warnings.extend(result.get("warnings") or [])
+            targets.append(
+                {
+                    "target_text": target_text,
+                    "status": _comparison_target_status(supporting_results),
+                    "normalized_slots": _merge_normalized_slots(supporting_results),
+                    "supporting_results": supporting_results,
+                }
+            )
+
+        return tool_result(
+            "comparison_query",
+            _comparison_overall_status(targets),
+            {
+                "target_type": target_type,
+                "target_texts": target_texts,
+                "major_text": major_text,
+                "province": province,
+                "subject_type": subject_type,
+                "score": score,
+                "rank": rank,
+                "year": year,
+                "dimensions": dimensions,
+                "limit": limit,
+            },
+            normalized_slots={
+                "target_type": normalized_type,
+                "target_texts": clean_targets,
+                "major_text": major_text,
+                "province": province,
+                "subject_type": subject_type,
+                "year": year,
+            },
+            data={
+                "target_type": normalized_type,
+                "targets": targets,
+                "dimensions": dimensions or _default_comparison_dimensions(normalized_type, bool(major_text)),
+                "decision_policy": "第一版只输出结构化并列信息；最终选择需结合考生偏好、分数位次和官方政策继续判断。",
+            },
+            scope_notes=[
+                "对比工具第一版只做结构化并列，不直接替用户做最终选择。",
+                "不同口径不能混用：学校级就业不代表校专业级就业，专业通用薪资不代表某校该专业薪资。",
+                "涉及分数/位次时只使用历史参考，不保证未来录取。",
+            ],
+            data_gaps=_distinct_texts(data_gaps),
+            source_tables=source_tables,
+            warnings=_distinct_texts(warnings),
+        )
+
+    def _comparison_supporting_results(
+        self,
+        *,
+        target_type: str,
+        target_text: str,
+        major_text: str | None,
+        province: str | None,
+        subject_type: str | None,
+        score: int | float | str | None,
+        rank: int | str | None,
+        year: int | None,
+    ) -> list[dict[str, Any]]:
+        """Build the per-target evidence pack for `comparison_query`.
+
+        这里没有直接写 SQL，而是复用已经测试过的工具。这样对比工具天然继承
+        原工具的数据口径、缺口提示和来源说明，减少重复 SQL 带来的口径漂移。
+        """
+
+        if target_type == "major":
+            return [
+                self.major_profile(target_text),
+                self.major_market_reference(target_text, sample_limit=10),
+            ]
+
+        if target_type == "school_major":
+            results = [
+                self.school_major_profile(target_text, major_text or "", province=province, subject_type=subject_type, year=year),
+                self.employment_summary(target_text, limit=3),
+            ]
+            if province or subject_type or year:
+                results.append(
+                    self.admission_history(
+                        school_text=target_text,
+                        major_text=major_text,
+                        province=province,
+                        subject_type=subject_type,
+                        years=[year] if year else None,
+                        limit=10,
+                    )
+                )
+            if score or rank:
+                results.append(
+                    self.rank_to_major_match(
+                        province=province or "",
+                        major_text=major_text or "",
+                        subject_type=subject_type,
+                        score=score,
+                        rank=rank,
+                        year=year,
+                        limit=10,
+                    )
+                )
+            return results
+
+        results = [self.school_profile(target_text)]
+        if major_text:
+            results.append(
+                self.school_major_profile(target_text, major_text, province=province, subject_type=subject_type, year=year)
+            )
+        if province or subject_type or year:
+            results.append(
+                self.admission_history(
+                    school_text=target_text,
+                    major_text=major_text,
+                    province=province,
+                    subject_type=subject_type,
+                    years=[year] if year else None,
+                    limit=10,
+                )
+            )
+        return results
+
     def admission_history(
         self,
         school_text: str | None = None,
@@ -1667,6 +1889,12 @@ class RetrievalTools:
                 "role_candidates": "考公岗位候选",
                 "official_role_table": "官方招录岗位表来源",
                 "manual_mapping": "专业代码人工确认映射",
+            },
+            "comparison_query": {
+                "target_profiles": "对比对象画像",
+                "admission_context": "录取历史上下文",
+                "employment_context": "就业/升学对比口径",
+                "decision_preferences": "考生偏好权重",
             },
         }
         expected = missing_by_type.get(question_type, {})
@@ -2395,6 +2623,63 @@ def _distinct_texts(values: Any) -> list[str]:
     return result
 
 
+def _comparison_target_status(results: list[dict[str, Any]]) -> str:
+    """Compress several supporting tool statuses into one target status."""
+
+    statuses = [str(result.get("status") or "") for result in results]
+    if not statuses:
+        return "not_found"
+    if any(status == "ok" for status in statuses):
+        return "partial" if any(status in {"partial", "not_found", "needs_clarification", "error"} for status in statuses) else "ok"
+    if any(status == "partial" for status in statuses):
+        return "partial"
+    if any(status == "needs_clarification" for status in statuses):
+        return "needs_clarification"
+    if any(status == "error" for status in statuses):
+        return "error"
+    return "not_found"
+
+
+def _comparison_overall_status(targets: list[dict[str, Any]]) -> str:
+    """Return an overall status for a comparison result."""
+
+    statuses = [str(target.get("status") or "") for target in targets]
+    if not statuses:
+        return "not_found"
+    if all(status == "ok" for status in statuses):
+        return "ok"
+    if any(status in {"ok", "partial"} for status in statuses):
+        return "partial"
+    if any(status == "needs_clarification" for status in statuses):
+        return "needs_clarification"
+    if any(status == "error" for status in statuses):
+        return "error"
+    return "not_found"
+
+
+def _merge_normalized_slots(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge normalized slots from supporting results for easier UI display."""
+
+    merged: dict[str, Any] = {}
+    for result in results:
+        normalized = result.get("normalized_slots")
+        if isinstance(normalized, dict):
+            for key, value in normalized.items():
+                if value not in (None, "", []):
+                    merged.setdefault(key, value)
+    return merged
+
+
+def _default_comparison_dimensions(target_type: str, has_major_context: bool) -> list[str]:
+    """Default dimensions shown to users when no explicit dimension is passed."""
+
+    if target_type == "major":
+        return ["专业定位", "学习内容", "通用就业方向", "市场样本薪资", "考公/政策缺口"]
+    if target_type == "school_major" or has_major_context:
+        return ["学校基础", "专业基础", "学科评估", "录取历史", "学校级就业", "校专业级数据缺口"]
+    return ["学校基础", "学校层次", "学科评估", "学校级就业/升学", "录取历史上下文"]
+
+
 def _group_specialty_group_rows(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     groups: list[dict[str, Any]] = []
     group_index: dict[tuple[str, str, str, str], dict[str, Any]] = {}
@@ -2812,6 +3097,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--group-code")
     p.add_argument("--major")
 
+    p = subparsers.add_parser("comparison_query")
+    p.add_argument("--target-type", required=True, choices=["school", "major", "school_major"])
+    p.add_argument("--target", dest="target_texts", action="append", required=True)
+    p.add_argument("--major")
+    p.add_argument("--province")
+    p.add_argument("--subject-type")
+    p.add_argument("--score")
+    p.add_argument("--rank")
+    p.add_argument("--year", type=int)
+    p.add_argument("--dimension", dest="dimensions", action="append")
+    p.add_argument("--limit", type=int, default=10)
+
     p = subparsers.add_parser("admission_history")
     p.add_argument("--school")
     p.add_argument("--major")
@@ -2910,6 +3207,18 @@ def main(argv: list[str] | None = None) -> int:
             args.year,
             args.group_code,
             args.major,
+        ),
+        "comparison_query": lambda: tools.comparison_query(
+            args.target_type,
+            args.target_texts,
+            args.major,
+            args.province,
+            args.subject_type,
+            args.score,
+            args.rank,
+            args.year,
+            args.dimensions,
+            args.limit,
         ),
         "admission_history": lambda: tools.admission_history(args.school, args.major, args.province, args.subject_type, args.years, args.limit),
         "major_market_reference": lambda: tools.major_market_reference(args.major, args.sample_limit),

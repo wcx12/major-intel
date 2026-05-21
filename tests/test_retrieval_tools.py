@@ -782,6 +782,27 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(result["data"]["risk"]["major_count"], 2)
         self.assertIn("不等于真实分流比例", result["scope_notes"][0])
 
+    def test_comparison_query_compares_school_profiles_without_making_final_choice(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_dual_class", []),
+                    ("FROM edu_university_subject_eval", []),
+                    ("FROM edu_university_employment", []),
+                ]
+            )
+        )
+
+        result = tools.comparison_query(target_type="school", target_texts=["杭电", "浙大"])
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["target_type"], "school")
+        self.assertEqual([target["target_text"] for target in result["data"]["targets"]], ["杭电", "浙大"])
+        self.assertEqual(result["data"]["targets"][0]["supporting_results"][0]["tool_name"], "school_profile")
+        self.assertIn("结构化并列", result["scope_notes"][0])
+        self.assertIn("edu_university", result["source_tables"])
+
     def test_major_market_reference_uses_ingested_market_tables(self):
         tools = RetrievalTools(
             FakeClient(
