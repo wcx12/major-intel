@@ -14,6 +14,23 @@
 低置信度不编造，进入补数队列。
 ```
 
+## 当前实现状态（2026-05-21）
+
+第一版已经落地：
+
+- `scripts/agent_query_storage.py` 会创建 `data_gap_queue` 表。
+- `scripts/retrieval_agent_entrypoint.py` 在启用 `--enable-storage` 后，会把工具返回的 `data_gaps` 和关键 `not_found` 结果写入队列。
+- 队列通过 `gap_key` 去重；重复缺口不会反复新增任务，而是增加 `hit_count` 并刷新 `last_seen_at`。
+- 当前记录字段包括用户问题、规范化问题、问题类型、学校/专业/省份/科类/年份/批次、缺失字段、已有字段、优先级、状态、原因、建议来源和预期写回目标。
+- 已有单元测试覆盖建表 SQL、缺口项生成、统一入口自动入队。
+
+仍未完成：
+
+- 联网 agent 消费 `pending` 队列。
+- 官方来源发现、网页/PDF 抓取、结构化抽取。
+- 来源冲突校验、人工复核、写回正式事实表。
+- `resolved` 后自动失效缓存并重算答案。
+
 ## 为什么需要缺口队列
 
 高校专业问答里有很多高风险问题：
@@ -322,11 +339,16 @@ priority = 2
 3. 更新最近一次用户问题。
 4. 如果新问题更具体，可以追加到 `user_question_examples`。
 
-建议后续扩展字段：
+第一版已经包含：
 
 ```text
 hit_count
 last_seen_at
+```
+
+建议后续扩展字段：
+
+```text
 user_question_examples
 ```
 

@@ -111,7 +111,9 @@ data_gap_detection
 - `specialty_group_lookup`、`subject_requirement_lookup`、`school_department_major_list`、`plan_history` 已经补齐，能覆盖专业组、选科、院系专业和招生计划类问题。
 - `employment_summary`、`transfer_policy_lookup`、`fee_and_campus_lookup`、`specialty_group_risk` 已经进入正式工具层，但仍会在校专业级就业、官方转专业复核、稳定校区字段、真实分流比例处标注缺口。
 - `civil_service_mapping` 仍处于部分完成状态：当前只有 `civil_service_role_search` 样本检索，正式可报判定、人工确认和政策解释还没有完成。
-- 下一批主要剩 `comparison_query`、`major_streaming_policy_lookup`、`policy_rule_lookup`，以及把这些工具接入自然语言 agent 的自动选择流程。
+- 自然语言 agent 的离线规则入口、DeepSeek function-call agent 和统一入口已完成第一版，可以把高频中文问题自动归一到 intent、slots 和工具计划，也能把复杂问题交给 LLM 自动选择工具。
+- 缺口队列 `data_gap_queue` 已完成第一版，统一入口遇到本地缺口时可以去重入队。
+- 下一批主要剩 `comparison_query`、`major_streaming_policy_lookup`、`policy_rule_lookup`，以及让动态 RAG 和人工复核流程消费缺口队列。
 
 ## 考生问题总分类
 
@@ -455,6 +457,8 @@ data_gap_detection
 
 ## 检索总入口建议
 
+详细设计已经落到 `docs/specs/natural-language-entrypoint.md`。本节保留为问题地图里的总入口摘要；实现时以后者为准。
+
 总入口不应让用户手动选择模式，而应自动完成以下流程。
 
 ```text
@@ -523,7 +527,7 @@ data_gap_detection
 
 ## 下一步实施建议
 
-下一步可以开始实现检索总入口的第一批能力。建议先做一个轻量命令行或 API 层，输入自然语言或结构化参数，输出：
+检索总入口第一批能力已经落到 `scripts/natural_language_entrypoint.py`。后续继续演进时，仍建议保持轻量命令行或 API 层的输出结构稳定，输入自然语言或结构化参数，输出：
 
 ```text
 intent

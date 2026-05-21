@@ -836,6 +836,8 @@ tests/test_retrieval_tools.py
 
 ## Agent 调用策略示例
 
+自然语言总入口的完整设计见 `docs/specs/natural-language-entrypoint.md`。本节只保留 function call 层面的调用示例。
+
 用户问题：
 
 ```text
@@ -903,18 +905,24 @@ data_gap_detection
 
 ## 验收清单
 
-当前完成记录（2026-05-20）：
+当前完成记录（2026-05-21）：
 
 - 第一阶段 10 个 P0 工具已经全部实现。
-- 第二阶段 `rank_to_school_match` 与 `rank_to_major_match` 已完成第一版，可按位次或分数返回冲/稳/保学校桶/学校-专业行桶，并标记历史年份回退。
+- 第二阶段 `rank_to_school_match`、`rank_to_major_match`、`specialty_group_lookup`、`plan_history`、`subject_requirement_lookup`、`school_department_major_list` 已完成第一版，可覆盖位次匹配、专业组、招生计划、选科和院系专业关系。
+- 第三阶段 `specialty_group_risk`、`employment_summary`、`major_market_reference`、`source_trace_lookup` 已完成第一版；`comparison_query` 仍待制作。
+- 第四阶段 `transfer_policy_lookup`、`fee_and_campus_lookup` 已完成第一版；`major_streaming_policy_lookup`、`policy_rule_lookup` 仍待制作；`civil_service_mapping` 仍是部分完成。
 - `major_market_reference` 和 `civil_service_role_search` 已经提前实现，用于读取已经接入的市场样本和考公岗位样本。
 - 已完成 agent function schema 注册层：`scripts/retrieval_function_registry.py`。
+- 已完成自然语言总入口离线规则第一版：`scripts/natural_language_entrypoint.py`，可把高频中文问题自动映射到 intent、slots 和工具计划。
+- 已完成 DeepSeek function-call agent：`scripts/deepseek_retrieval_agent.py`，可让 LLM 基于同一套 function schema 自动选择本地工具。
+- 已完成统一入口：`scripts/retrieval_agent_entrypoint.py`，可在 `auto` 模式下优先使用规则入口，并把复杂/未知问题交给 DeepSeek agent。
+- 已完成统一入口缓存/日志/缺口队列存储层：`scripts/agent_query_storage.py`，可创建 `query_logs`、`retrieval_cache`、`agent_tool_traces`、`data_gap_queue`。
 - 已完成本地批量烟测脚本：`scripts/run_retrieval_smoke_cases.py`。
 - 已完成数据库别名初始化脚本：`scripts/setup_entity_aliases.py`，会创建/维护 `entity_aliases` 与 `entity_alias_candidates`。
 - 已修复 MySQL CLI 长文本换行解析问题，`major_lookup` 不会再把专业介绍里的“关键词/课程列表”拆成假候选记录。
 - 已完成 `major_lookup` 数据库别名解析，真实库验证“计科”返回“计算机科学与技术”，“软工”返回“软件工程”。
-- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 79 个测试通过。
-- 当前烟测用例矩阵覆盖 14 个工具入口；本轮真实库抽样验证 `rank_to_school_match`、`rank_to_major_match` 样本通过。
+- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 115 个测试通过；自然语言入口专项测试为 10 个场景，统一入口专项测试为 8 个场景，缓存/日志/缺口队列专项测试为 5 个场景。
+- 当前烟测用例矩阵覆盖 23 个工具入口；完整真实库结构烟测 290/290 通过，新增 9 个工具 strict-target 烟测 27/27 通过且质量预期 0 miss。
 
 第一阶段完成时应满足：
 
