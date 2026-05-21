@@ -12,6 +12,7 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 
 - 本地 MySQL 检索工具层。
 - 27 个正式 function call schema 与 dispatcher。
+- 第一版 SQL-first RAG：本地 function call 负责检索，MySQL 查询结果作为回答上下文。
 - DeepSeek function-call agent。
 - 离线规则自然语言入口。
 - 统一 agent 入口，能在规则入口和 DeepSeek agent 之间自动协调。
@@ -21,7 +22,7 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 当前仍未完成：
 
 - 大类分流、招生政策、考公映射已有保守 function call 接口，但官方证据和正式判定仍未完成。
-- 动态 RAG/人工复核闭环：`data_gap_queue` 已能记录缺口，并能生成本地证据检索任务；联网找源、抽取、校验和人工审核写回还没接通。
+- V2 联网证据补全 RAG/人工复核闭环：`data_gap_queue` 已能记录缺口，并能生成本地证据检索任务；联网找源、抽取、校验和人工审核写回还没接通。
 - 校专业级就业事实库：就业地域分布、薪资分布、Top 公司、升学去向、学校官网专业介绍证据链。
 
 更细的阶段性状态见 [docs/status/current-state.md](docs/status/current-state.md)。
@@ -43,6 +44,13 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
   -> scripts/agent_query_storage.py
        query_logs / retrieval_cache / agent_tool_traces / data_gap_queue
 ```
+
+第一版 RAG 的口径是 SQL-first：
+
+- `retrieval_function_registry.py` 暴露的 27 个 function call 就是 retriever。
+- `retrieval_tools.py` 查询本地 MySQL 后返回 `data`、`scope_notes`、`warnings`、`data_gaps` 和 `source_tables`。
+- agent 只基于这些工具结果组织回答，不能绕过工具凭模型记忆补事实。
+- 查不到的数据进入 `data_gap_queue` 和 `data_gap_evidence_tasks`，后续再由联网/人工流程补证据。
 
 核心原则：
 
@@ -350,7 +358,16 @@ OK
 
 ## 接下来怎么做
 
-建议后续按下面顺序推进。
+建议后续先验收第一版 SQL-first RAG，再进入联网证据补全。
+
+当前最优先：
+
+1. 补齐 27 个正式工具的真实库 smoke 矩阵，确认每个 function call 在本地 MySQL 都能稳定返回结构化上下文。
+2. 修一轮工具输出质量，重点看 `scope_notes`、`warnings`、`data_gaps` 和 `ok/partial/not_found` 状态是否一致。
+3. 再为分流、招生政策、考公映射补事实表和写回字段。
+4. 最后让联网 agent 消费 `data_gap_evidence_tasks.ready`，做官方来源发现、抓取、抽取和人工复核。
+
+下面是已经完成或规划过的阶段记录。
 
 ### 第 1 步：补 `data_gap_queue`（已完成第一版）
 

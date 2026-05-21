@@ -14,6 +14,7 @@
 当前结论：
 
 - 27 个底层检索工具已经具备 function call schema 和 dispatcher。
+- 第一版 RAG 采用 SQL-first 口径：本地 function call 是 retriever，MySQL 查询结果是 context，agent 只负责路由和表达。
 - 自然语言总入口的详细设计从本文件开始作为主设计口径。
 - 离线规则入口已落地到 `scripts/natural_language_entrypoint.py`，并由 `tests/test_natural_language_entrypoint.py` 覆盖第一批高频场景。
 - DeepSeek function-call agent 已落地到 `scripts/deepseek_retrieval_agent.py`，统一入口已落地到 `scripts/retrieval_agent_entrypoint.py`。
@@ -54,6 +55,38 @@
 - 不把学校级就业数据说成校专业级就业数据。
 - 不把岗位文本命中说成考公岗位正式可报。
 - 不把专业组构成说成真实分流比例。
+
+## RAG 分层
+
+### V1：SQL Function-call RAG
+
+第一版 RAG 已经按“SQL-first”方式落地。它不依赖向量库或联网搜索，而是把 27 个正式 function call 当作检索器：
+
+```text
+自然语言问题
+  -> intent / slots
+  -> tool_plan
+  -> 本地 function call
+  -> MySQL 查询
+  -> 结构化 tool_trace
+  -> 模板或 LLM 基于 tool_trace 组织回答
+```
+
+V1 的回答边界由工具结果控制：
+
+- `data` 是可以使用的事实或样本。
+- `scope_notes` 告诉 agent 这些事实属于学校级、专业通用级、校专业级还是招生专业组级。
+- `warnings` 告诉 agent 哪些表述容易误导用户。
+- `data_gaps` 告诉 agent 必须说明哪些字段缺失。
+- `source_tables` 用于追踪本地 SQL 证据来源。
+
+因此，V1 的验收重点不是“能不能搜互联网”，而是 27 个工具在真实库中能否稳定返回结构化上下文、缺口和口径说明。
+
+### V2：联网证据补全 RAG
+
+第二版再让后台 agent 消费 `data_gap_evidence_tasks.ready`，去找学校官网、招生章程、就业质量报告、考试院文件等官方来源。联网结果必须先写入 `source_documents` 或事实表，再由 V1 的 SQL function call 读出来用于回答。
+
+V2 不直接面对用户，也不允许把搜索摘要临时写成事实答案。
 
 ## 总体架构
 
@@ -478,9 +511,9 @@ agent-cache-v1 + 规范化问题 + mode + route + intent + slots + tool_plan
 
 当前第一版已经记录 `gap_key`、`query_log_id`、`session_id`、问题类型、学校/专业/省份/科类/年份/批次、缺失字段、已有字段、用户原问题、规范化问题、优先级、状态、原因、建议来源和预期写回目标。现在还可以把 `pending` 缺口转成 `data_gap_evidence_tasks.ready`，后续联网 agent 和人工复核系统消费证据任务即可。
 
-## 动态 RAG 流程
+## V2 动态 RAG 流程
 
-动态 RAG 不应让联网搜索直接面对用户。推荐流程：
+动态 RAG 是第二版证据补全流程，不是第一版用户问答的必需条件。它不应让联网搜索直接面对用户。推荐流程：
 
 ```text
 总入口发现缺口
