@@ -62,6 +62,7 @@ data_gap_detection
 - 自然语言总入口已完成离线规则第一版：支持工具自动选择、缺槽追问、多工具编排、结果口径聚合和 `--no-execute` 纯计划模式。
 - DeepSeek LLM function-call agent 已有实现，并已通过统一入口接入：高频明确问题优先走规则入口，复杂/未知问题交给 DeepSeek 自动选择工具。
 - 统一入口已接入第一版 MySQL 运营存储：`query_logs`、`retrieval_cache`、`agent_tool_traces`、`data_gap_queue`，通过 `--enable-storage` 开启。
+- 缺口队列本地前置层已补齐：`source_documents` 与 `data_gap_evidence_tasks` 可建表，`pending` 缺口可生成 `ready` 证据检索任务。
 - 本轮新增 9 个正式工具：专业组查询、选科要求、院系专业、招生计划、学校级就业摘要、来源追踪、转专业政策、学费线索/校区缺口、专业组风险初筛。
 - 招生计划/学费等混合来源表已经改成“专业代码精确 + 专业名精确 + 专业名包含”的匹配，能命中带校区、中外合作、学费说明等后缀的专业名。
 
@@ -114,7 +115,7 @@ policy_rule_lookup
 
 当前验证：
 
-- 单元测试：`python -m unittest discover -s tests` 最近一次为 123 个测试通过，其中自然语言入口专项测试覆盖 13 个场景，统一入口专项测试覆盖 9 个场景，缓存/日志/缺口队列专项测试覆盖 5 个场景。
+- 单元测试：`python -m unittest discover -s tests` 最近一次为 125 个测试通过，其中自然语言入口专项测试覆盖 13 个场景，统一入口专项测试覆盖 9 个场景，缓存/日志/缺口队列专项测试覆盖 7 个场景。
 - 烟测矩阵：已覆盖上一轮 23 个工具入口；新补的 4 个工具真实库 smoke 已做抽样，仍待补进批量矩阵。
 - 真实库抽样：`specialty_group_lookup`、`fee_and_campus_lookup`、`transfer_policy_lookup`、`rank_to_major_match` 等已验证可跑通。
 
@@ -129,7 +130,7 @@ policy_rule_lookup
 | 某专业组：分流比例、分流到冷门专业比例、转专业政策 | 部分完成 | `specialty_group_lookup` 能查专业组和组内专业；`specialty_group_risk` 能按组内构成做风险初筛；`transfer_policy_lookup` 能查第三方转专业线索 | 真实分流比例、冷门专业人工标签、官方转专业政策复核仍缺 |
 | 覆盖多数高校，尤其 211 以下中等学校 | 部分完成 | 工具层已经完全基于本地 MySQL，可覆盖库里已有学校和专业；`school_lookup`、`major_lookup`、列表类工具可通用查询 | 覆盖率取决于本地表实际数据完整度；还没有做覆盖率报告和缺口优先级排序 |
 | 就业情况：工作地域分布、工资分布、Top 10 对口公司、考公对口岗位 | 部分完成 | `employment_summary` 有学校级就业/升学摘要；`major_market_reference` 有专业通用市场样本；`civil_service_role_search` 有考公岗位文本命中样本 | 校专业级地域/工资/公司 Top 10 仍缺；`civil_service_mapping` 尚未做到正式可报判定 |
-| 动态 RAG：学生提问时搜索、缓存、入库，不命中再 AI 搜索，搜不到不编，后台抛给人工 | 部分完成 | 已有 function schema、工具层、`source_trace_lookup`、`data_gap_detection`、自然语言规则入口、DeepSeek tool-call agent、统一入口、查询缓存/日志表和 `data_gap_queue` 第一版入队 | 联网搜索 agent、抽取校验、人工复核和写回闭环还没正式落地 |
+| 动态 RAG：学生提问时搜索、缓存、入库，不命中再 AI 搜索，搜不到不编，后台抛给人工 | 部分完成 | 已有 function schema、工具层、`source_trace_lookup`、`data_gap_detection`、自然语言规则入口、DeepSeek tool-call agent、统一入口、查询缓存/日志表、`data_gap_queue` 入队和 `data_gap_evidence_tasks` 本地任务生成 | 联网搜索 agent、抽取校验、人工复核和写回闭环还没正式落地 |
 | 学生可能问题的检索总入口和 function call 自动选择 | 第一版已完成 | 已新增 `scripts/natural_language_entrypoint.py`、`scripts/deepseek_retrieval_agent.py`、`scripts/retrieval_agent_entrypoint.py`、`scripts/agent_query_storage.py`；能做规则优先路由、复杂问题 LLM tool-call、缺槽追问、工具计划生成、多工具编排、结构化对比、结果口径聚合、缓存、查询日志和缺口入队；27 个底层 function call 工具已注册 | 还没有接入联网搜索 agent 和人工复核处理流 |
 
 ### 1.3 当前最重要的缺口
@@ -195,22 +196,15 @@ policy_rule_lookup
 - `gaokao-zhiyuan-projects/`
 - `docs/superpowers/`
 
-当前工作区还存在未提交文件，需要下一次提交时统一纳入或继续忽略：
+当前仍保留的未跟踪报告文件，继续按生成物处理，默认不提交：
 
-- `.env.example`
-- `docs/specs/natural-language-entrypoint.md`
-- `scripts/deepseek_retrieval_agent.py`
-- `scripts/natural_language_entrypoint.py`
-- `scripts/retrieval_agent_entrypoint.py`
-- `scripts/agent_query_storage.py`
-- `tests/test_deepseek_retrieval_agent.py`
-- `tests/test_natural_language_entrypoint.py`
-- `tests/test_retrieval_agent_entrypoint.py`
-- `tests/test_agent_query_storage.py`
+- `reports/deepseek_agent_manual_test_20260520_205645.md`
+- `reports/deepseek_agent_plain_style_check.md`
+- `reports/deepseek_tool_selection_matrix.json`
 
 ## 下一步建议
 
-1. 让 `data_gap_queue` 接入联网找源、抽取、校验、人工复核和写回流程。
+1. 让联网 agent 消费 `data_gap_evidence_tasks.ready`，完成官方来源发现和网页/PDF 抓取。
 2. 为 `major_streaming_policy_lookup` 接入官方分流政策和真实分流比例数据源。
 3. 为 `policy_rule_lookup` 接入招生章程、批次规则、特殊限制的官方证据链。
 4. 将 `civil_service_mapping` 从样本命中升级为正式可报条件判定。

@@ -22,11 +22,13 @@
 - `scripts/retrieval_agent_entrypoint.py` 在启用 `--enable-storage` 后，会把工具返回的 `data_gaps` 和关键 `not_found` 结果写入队列。
 - 队列通过 `gap_key` 去重；重复缺口不会反复新增任务，而是增加 `hit_count` 并刷新 `last_seen_at`。
 - 当前记录字段包括用户问题、规范化问题、问题类型、学校/专业/省份/科类/年份/批次、缺失字段、已有字段、优先级、状态、原因、建议来源和预期写回目标。
+- `scripts/agent_query_storage.py` 也会创建 `source_documents` 和 `data_gap_evidence_tasks`，并能把 `pending` 缺口转成 `ready` 证据检索任务。
+- `--plan-gap-tasks` 可以只查看待搜索任务，`--enqueue-gap-tasks` 可以把任务写入本地 MySQL。
 - 已有单元测试覆盖建表 SQL、缺口项生成、统一入口自动入队。
 
 仍未完成：
 
-- 联网 agent 消费 `pending` 队列。
+- 联网 agent 消费 `data_gap_evidence_tasks.ready` 任务。
 - 官方来源发现、网页/PDF 抓取、结构化抽取。
 - 来源冲突校验、人工复核、写回正式事实表。
 - `resolved` 后自动失效缓存并重算答案。
@@ -354,12 +356,13 @@ user_question_examples
 
 ## 与联网 Agent 的关系
 
-后续 agent 只消费 `pending` 或 `failed` 状态的数据缺口。
+后续 agent 优先消费 `data_gap_evidence_tasks.ready` 任务；必要时也可以回看 `pending` 或 `failed` 状态的数据缺口。
 
 流程：
 
 ```text
 data_gap_queue.pending
+  -> data_gap_evidence_tasks.ready
   -> SourceDiscoveryAgent 找来源
   -> CrawlerAgent 抓取文档
   -> ExtractorAgent 抽取字段
@@ -367,6 +370,8 @@ data_gap_queue.pending
   -> WriterAgent 写回数据库
   -> data_gap_queue.resolved 或 needs_review
 ```
+
+当前已完成第一步任务生成；后续联网 agent 不需要重新理解用户问题，只需要消费 `data_gap_evidence_tasks` 里的 `search_query`、`preferred_sources_json` 和 `expected_outputs_json`。
 
 ## 与用户回答的关系
 
@@ -393,4 +398,4 @@ data_gap_queue.pending
 3. 每个缺口有明确的缺失字段。
 4. 每个缺口有建议来源和预期输出。
 5. 回答中能明确说明缺失，而不是编造。
-6. 后续联网 agent 可以直接按队列消费任务。
+6. 后续联网 agent 可以直接按 `data_gap_evidence_tasks.ready` 消费任务。

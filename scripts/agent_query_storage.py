@@ -29,6 +29,7 @@ from scripts.local_retrieval_mvp import DbConfig, MysqlCliClient, sql_quote
 
 CACHE_VERSION = "agent-cache-v1"
 DATA_GAP_QUEUE_VERSION = "data-gap-v1"
+DATA_GAP_EVIDENCE_TASK_VERSION = "data-gap-evidence-task-v1"
 
 # These statuses mean the retrieval layer did not have enough local evidence to
 # answer.  Even if a tool forgets to populate `data_gaps`, we still create a
@@ -153,6 +154,58 @@ CREATE TABLE IF NOT EXISTS data_gap_queue (
     FOREIGN KEY (query_log_id) REFERENCES query_logs(id)
     ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS source_documents (
+  id CHAR(32) NOT NULL,
+  source_key CHAR(64) NOT NULL,
+  source_type VARCHAR(64) NOT NULL,
+  source_url TEXT NULL,
+  title VARCHAR(512) NULL,
+  publisher VARCHAR(255) NULL,
+  publish_date DATE NULL,
+  fetched_at DATETIME NULL,
+  content_hash CHAR(64) NULL,
+  raw_text LONGTEXT NULL,
+  metadata_json JSON NULL,
+  credibility_level VARCHAR(32) NOT NULL DEFAULT 'unverified',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_source_documents_source_key (source_key),
+  KEY idx_source_documents_source_type (source_type),
+  KEY idx_source_documents_credibility (credibility_level),
+  KEY idx_source_documents_content_hash (content_hash)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS data_gap_evidence_tasks (
+  id CHAR(32) NOT NULL,
+  task_key CHAR(64) NOT NULL,
+  gap_id CHAR(32) NOT NULL,
+  gap_key CHAR(64) NOT NULL,
+  question_type VARCHAR(128) NOT NULL,
+  search_query VARCHAR(512) NOT NULL,
+  preferred_sources_json JSON NULL,
+  expected_outputs_json JSON NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'ready',
+  priority TINYINT NOT NULL DEFAULT 2,
+  attempt_count INT NOT NULL DEFAULT 0,
+  last_error MEDIUMTEXT NULL,
+  result_document_id CHAR(32) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  started_at DATETIME NULL,
+  completed_at DATETIME NULL,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_data_gap_evidence_tasks_task_key (task_key),
+  KEY idx_data_gap_evidence_tasks_status_priority (status, priority, updated_at),
+  KEY idx_data_gap_evidence_tasks_gap_key (gap_key),
+  CONSTRAINT fk_data_gap_evidence_tasks_gap
+    FOREIGN KEY (gap_id) REFERENCES data_gap_queue(id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_data_gap_evidence_tasks_source_document
+    FOREIGN KEY (result_document_id) REFERENCES source_documents(id)
+    ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 """.strip()
 
 
@@ -260,6 +313,64 @@ def build_data_gap_items(
         },
     }
     return [item]
+
+
+def build_evidence_tasks(gap_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Convert queue rows into local source-discovery tasks.
+
+    This is the first non-network step of dynamic RAG.  It turns "what is
+    missing" into "what should the next agent search for" while keeping the
+    result fully deterministic and easy to review in tests.
+    """
+
+    tasks: list[dict[str, Any]] = []
+    for gap_item in gap_items:
+        task = build_evidence_task(gap_item)
+        if task:
+            tasks.append(task)
+    return tasks
+
+
+def build_evidence_task(gap_item: dict[str, Any]) -> dict[str, Any] | None:
+    """Build one evidence task for a `data_gap_queue` row.
+
+    A single first-version task is enough because the downstream search agent
+    can fan out by preferred source.  The stable `task_key` prevents duplicate
+    tasks when the same data gap is seen repeatedly.
+    """
+
+    gap_id = str(gap_item.get("id") or "").strip()
+    gap_key = str(gap_item.get("gap_key") or "").strip()
+    if not gap_id or not gap_key:
+        return None
+
+    missing_fields = _unique_texts(gap_item.get("missing_fields") or [])
+    search_query = _build_gap_search_query(gap_item, missing_fields)
+    preferred_sources = _preferred_sources_for_gap(gap_item, missing_fields)
+    expected_outputs = gap_item.get("expected_outputs") or {
+        "missing_fields": missing_fields,
+        "write_targets": ["source_documents", "fact_tables_or_manual_review"],
+    }
+    task_key_source = {
+        "version": DATA_GAP_EVIDENCE_TASK_VERSION,
+        "gap_key": gap_key,
+        "search_query": search_query,
+        "expected_outputs": expected_outputs,
+    }
+    task_key = hashlib.sha256(_json_dumps(task_key_source).encode("utf-8")).hexdigest()
+
+    return {
+        "id": uuid.uuid4().hex,
+        "task_key": task_key,
+        "gap_id": gap_id,
+        "gap_key": gap_key,
+        "question_type": str(gap_item.get("question_type") or "unknown"),
+        "search_query": search_query,
+        "preferred_sources": preferred_sources,
+        "expected_outputs": expected_outputs,
+        "status": "ready",
+        "priority": _coerce_int(gap_item.get("priority")) or 2,
+    }
 
 
 class MysqlAgentQueryStorage:
@@ -491,6 +602,112 @@ ON DUPLICATE KEY UPDATE
         )
         self.execute(sql)
 
+    def list_pending_gap_items(self, limit: int = 20, statuses: list[str] | None = None) -> list[dict[str, Any]]:
+        """Read queue rows that are ready for evidence discovery.
+
+        The evidence worker should not inspect raw MySQL JSON text directly.
+        We base64-encode JSON columns in SQL so multiline Chinese text and JSON
+        arrays survive the mysql CLI TSV parser without accidental splitting.
+        """
+
+        safe_limit = max(1, min(int(limit), 200))
+        wanted_statuses = statuses or ["pending", "failed"]
+        status_sql = ", ".join(sql_quote(status) for status in wanted_statuses)
+        rows = self.reader.query(
+            f"""
+SELECT id, gap_key, question_type, school_text, major_text, province, subject_type,
+       year, batch, priority, status, confidence_level, user_question,
+       normalized_question, reason,
+       TO_BASE64(CAST(missing_fields_json AS CHAR CHARACTER SET utf8mb4)) AS missing_fields_json_b64,
+       TO_BASE64(CAST(available_fields_json AS CHAR CHARACTER SET utf8mb4)) AS available_fields_json_b64,
+       TO_BASE64(CAST(source_constraints_json AS CHAR CHARACTER SET utf8mb4)) AS source_constraints_json_b64,
+       TO_BASE64(CAST(expected_outputs_json AS CHAR CHARACTER SET utf8mb4)) AS expected_outputs_json_b64
+FROM data_gap_queue
+WHERE status IN ({status_sql})
+ORDER BY priority ASC, hit_count DESC, updated_at ASC
+LIMIT {safe_limit}
+""".strip()
+        )
+        return [_decode_gap_queue_row(row) for row in rows]
+
+    def build_evidence_tasks_from_pending(
+        self,
+        limit: int = 20,
+        statuses: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Build local source-discovery tasks from pending gap rows."""
+
+        return build_evidence_tasks(self.list_pending_gap_items(limit=limit, statuses=statuses))
+
+    def write_evidence_tasks(self, tasks: list[dict[str, Any]]) -> None:
+        """Upsert source-discovery tasks generated from `data_gap_queue`.
+
+        The table stores search intent only.  A later web/search agent may pick
+        up `ready` rows, fetch sources, and write verified documents into
+        `source_documents`.  Keeping this step local makes the pipeline
+        testable before any network or LLM behavior is introduced.
+        """
+
+        if not tasks:
+            return
+
+        values = []
+        for task in tasks:
+            values.append(
+                "("
+                f"{sql_quote(str(task.get('id') or uuid.uuid4().hex))}, "
+                f"{sql_quote(str(task.get('task_key') or ''))}, "
+                f"{sql_quote(str(task.get('gap_id') or ''))}, "
+                f"{sql_quote(str(task.get('gap_key') or ''))}, "
+                f"{sql_quote(str(task.get('question_type') or 'unknown'))}, "
+                f"{sql_quote(str(task.get('search_query') or ''))}, "
+                f"{_json_sql(task.get('preferred_sources') or [])}, "
+                f"{_json_sql(task.get('expected_outputs') or {})}, "
+                f"{sql_quote(str(task.get('status') or 'ready'))}, "
+                f"{_coerce_int(task.get('priority')) or 2}"
+                ")"
+            )
+
+        sql = (
+            """
+INSERT INTO data_gap_evidence_tasks (
+  id, task_key, gap_id, gap_key, question_type, search_query,
+  preferred_sources_json, expected_outputs_json, status, priority
+) VALUES
+""".strip()
+            + "\n"
+            + ",\n".join(values)
+            + "\n"
+            + """
+ON DUPLICATE KEY UPDATE
+  search_query = VALUES(search_query),
+  preferred_sources_json = VALUES(preferred_sources_json),
+  expected_outputs_json = VALUES(expected_outputs_json),
+  status = IF(status IN ('done', 'needs_review'), status, VALUES(status)),
+  priority = LEAST(priority, VALUES(priority)),
+  updated_at = CURRENT_TIMESTAMP
+""".strip()
+        )
+        self.execute(sql)
+
+    def prepare_evidence_tasks(
+        self,
+        limit: int = 20,
+        statuses: list[str] | None = None,
+        dry_run: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Build evidence tasks and optionally persist them.
+
+        `dry_run=True` powers manual review and CI-style smoke checks.  The
+        default path writes idempotently, so rerunning the worker does not create
+        duplicate tasks for the same gap/search intent.
+        """
+
+        tasks = self.build_evidence_tasks_from_pending(limit=limit, statuses=statuses)
+        if not dry_run:
+            self.write_evidence_tasks(tasks)
+        return tasks
+
     def execute(self, sql: str) -> None:
         """Run a write/DDL statement through mysql CLI using env-based password."""
 
@@ -600,6 +817,93 @@ def _unique_texts(values: Any) -> list[str]:
     return unique
 
 
+def _decode_gap_queue_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Decode one mysql CLI row from `data_gap_queue`.
+
+    JSON columns are selected as base64 text by `list_pending_gap_items()`.
+    Decoding them in one place keeps the rest of the workflow working with
+    normal Python dictionaries and lists.
+    """
+
+    decoded = dict(row)
+    decoded["missing_fields"] = _json_loads(_decode_base64_text(row.get("missing_fields_json_b64")), default=[])
+    decoded["available_fields"] = _json_loads(_decode_base64_text(row.get("available_fields_json_b64")), default={})
+    decoded["source_constraints"] = _json_loads(_decode_base64_text(row.get("source_constraints_json_b64")), default={})
+    decoded["expected_outputs"] = _json_loads(_decode_base64_text(row.get("expected_outputs_json_b64")), default={})
+    decoded["year"] = _coerce_int(decoded.get("year"))
+    decoded["priority"] = _coerce_int(decoded.get("priority")) or 2
+    for raw_key in (
+        "missing_fields_json_b64",
+        "available_fields_json_b64",
+        "source_constraints_json_b64",
+        "expected_outputs_json_b64",
+    ):
+        decoded.pop(raw_key, None)
+    return decoded
+
+
+def _build_gap_search_query(gap_item: dict[str, Any], missing_fields: list[str]) -> str:
+    """Create a concise Chinese search query for a missing evidence task."""
+
+    parts = _unique_texts(
+        [
+            gap_item.get("school_text"),
+            gap_item.get("major_text"),
+            gap_item.get("province"),
+            gap_item.get("year"),
+            *_field_search_terms(str(gap_item.get("question_type") or ""), missing_fields),
+        ]
+    )
+    query = " ".join(parts).strip()
+    return query[:512] or "高校 专业 官方 来源"
+
+
+def _field_search_terms(question_type: str, missing_fields: list[str]) -> list[str]:
+    """Translate missing fields into source-discovery keywords."""
+
+    text = " ".join([question_type, *missing_fields])
+    if any(word in text for word in ("分流", "大类", "冷门")):
+        return ["大类分流", "专业分流", "分流办法", "培养方案"]
+    if any(word in text for word in ("招生章程", "单科", "身体", "语种", "录取", "调剂", "中外合作")):
+        return ["招生章程", "录取规则", "单科限制", "身体条件", "外语语种"]
+    if any(word in text for word in ("考公", "公务员", "岗位", "职位表")):
+        return ["公务员职位表", "专业要求", "专业目录"]
+    if any(word in text for word in ("就业", "薪资", "Top", "公司", "升学")):
+        return ["就业质量报告", "毕业生就业去向", "薪资", "重点就业单位"]
+    if "转专业" in text:
+        return ["转专业", "管理办法", "教务处"]
+    return missing_fields[:4]
+
+
+def _preferred_sources_for_gap(gap_item: dict[str, Any], missing_fields: list[str]) -> list[str]:
+    """Return preferred source labels for a gap item.
+
+    The queue may already contain `source_constraints`.  We preserve those first
+    and append field-specific official sources, keeping the downstream web
+    agent focused on auditable sources rather than general search snippets.
+    """
+
+    constraints = gap_item.get("source_constraints") or {}
+    preferred: list[str] = []
+    if isinstance(constraints, dict):
+        for key in ("preferred_sources", "preferred_domains"):
+            value = constraints.get(key)
+            if isinstance(value, list):
+                preferred.extend(str(item) for item in value)
+    elif isinstance(constraints, list):
+        preferred.extend(str(item) for item in constraints)
+
+    field_text = " ".join(missing_fields)
+    if any(word in field_text for word in ("招生章程", "单科", "身体", "语种", "录取", "分流", "转专业")):
+        preferred.extend(["学校官网", "本科招生网", "教务处", "学院官网", "招生章程"])
+    if any(word in field_text for word in ("就业", "薪资", "公司", "升学")):
+        preferred.extend(["就业质量报告", "学校就业网", "学院官网"])
+    if any(word in field_text for word in ("考公", "岗位", "职位表", "专业代码")):
+        preferred.extend(["国家公务员局", "省公务员考试网", "官方职位表", "专业目录"])
+
+    return _unique_texts(preferred or DEFAULT_SOURCE_CONSTRAINTS["preferred_sources"])
+
+
 def _first_non_empty(*values: Any) -> Any:
     """Return the first value that is not None and not an empty string."""
 
@@ -680,13 +984,28 @@ def _decode_base64_text(value: Any) -> str | None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Create Major Intel agent query-log and cache tables.")
     parser.add_argument("--print-sql", action="store_true", help="只打印建表 SQL，不连接数据库。")
+    parser.add_argument("--plan-gap-tasks", action="store_true", help="读取 pending 缺口并输出待搜索证据任务，不写库。")
+    parser.add_argument("--enqueue-gap-tasks", action="store_true", help="读取 pending 缺口并写入 data_gap_evidence_tasks。")
+    parser.add_argument("--limit", type=int, default=20, help="处理的缺口数量上限。")
     args = parser.parse_args(argv)
 
     if args.print_sql:
         print(build_agent_storage_schema_sql())
         return 0
 
-    MysqlAgentQueryStorage().setup_schema()
+    storage = MysqlAgentQueryStorage()
+    if args.plan_gap_tasks:
+        tasks = storage.prepare_evidence_tasks(limit=args.limit, dry_run=True)
+        print(json.dumps(tasks, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.enqueue_gap_tasks:
+        storage.setup_schema()
+        tasks = storage.prepare_evidence_tasks(limit=args.limit, dry_run=False)
+        print(json.dumps({"status": "ok", "task_count": len(tasks)}, ensure_ascii=False, indent=2))
+        return 0
+
+    storage.setup_schema()
     print("agent query storage tables ready")
     return 0
 

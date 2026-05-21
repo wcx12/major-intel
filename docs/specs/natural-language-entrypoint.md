@@ -476,7 +476,7 @@ agent-cache-v1 + 规范化问题 + mode + route + intent + slots + tool_plan
 - 已有工具结果。
 - 推荐来源类型，例如官网、就业质量报告、招生章程、教务处通知。
 
-当前第一版已经记录 `gap_key`、`query_log_id`、`session_id`、问题类型、学校/专业/省份/科类/年份/批次、缺失字段、已有字段、用户原问题、规范化问题、优先级、状态、原因、建议来源和预期写回目标。后续联网 agent 和人工复核系统只需要消费 `pending` 队列即可。
+当前第一版已经记录 `gap_key`、`query_log_id`、`session_id`、问题类型、学校/专业/省份/科类/年份/批次、缺失字段、已有字段、用户原问题、规范化问题、优先级、状态、原因、建议来源和预期写回目标。现在还可以把 `pending` 缺口转成 `data_gap_evidence_tasks.ready`，后续联网 agent 和人工复核系统消费证据任务即可。
 
 ## 动态 RAG 流程
 
@@ -485,6 +485,7 @@ agent-cache-v1 + 规范化问题 + mode + route + intent + slots + tool_plan
 ```text
 总入口发现缺口
   -> 写 data_gap_queue
+  -> 生成 data_gap_evidence_tasks
   -> SourceDiscoveryAgent 找官方来源
   -> CrawlerAgent 抓网页/PDF
   -> ExtractorAgent 抽取结构化字段
@@ -586,11 +587,12 @@ agent-cache-v1 + 规范化问题 + mode + route + intent + slots + tool_plan
 
 目标：把 `data_gap_queue`、联网 agent 和人工复核闭环接起来。
 
-当前状态：缺口队列第一版已完成；联网找源、抓取、抽取、校验、人工审核和写回仍未实现。
+当前状态：缺口队列第一版和本地证据任务生成已完成；联网找源、抓取、抽取、校验、人工审核和写回仍未实现。
 
 要求：
 
 - 本地工具不命中时不编造。
+- `data_gap_queue.pending` 可以先转成 `data_gap_evidence_tasks.ready`，让后续 agent 明确知道该搜什么和优先搜哪些来源。
 - 自动检索只写证据，不直接生成最终事实。
 - 来源冲突或低置信度进入人工复核。
 - 人工确认后写回正式事实表或来源表。
@@ -606,5 +608,6 @@ LLM tool-call 入口：已完成第一版（`scripts/deepseek_retrieval_agent.py
 统一入口：已完成第一版（`scripts/retrieval_agent_entrypoint.py` + `tests/test_retrieval_agent_entrypoint.py`）
 缓存/日志：已完成第一版（`scripts/agent_query_storage.py` + `tests/test_agent_query_storage.py`）
 缺口队列：已完成第一版（`data_gap_queue` 建表、去重入队、统一入口接入）
-动态 RAG/人工复核闭环：未实现
+动态 RAG 本地前置层：已完成第一版（`source_documents` / `data_gap_evidence_tasks` 建表、缺口转证据任务）
+联网搜索/抽取/人工复核闭环：未实现
 ```

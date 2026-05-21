@@ -816,7 +816,8 @@ edu_university_department_major
 | `data_gap_queue` | 1 | 保存缺失数据和后续补数任务 |
 | `entity_aliases` | 1 | 已落地；保存人工确认别名，当前 `major_lookup` 已使用 |
 | `entity_alias_candidates` | 1 | 已落地；保存自动发现的候选别名，待人工确认后进入正式别名表 |
-| `source_documents` | 3 | 保存网页、PDF、招生章程等来源 |
+| `source_documents` | 3 | 已落地建表；保存网页、PDF、招生章程等来源 |
+| `data_gap_evidence_tasks` | 3 | 已落地建表；把缺口转成待联网 agent 或人工处理的证据检索任务 |
 | `school_major_evidence` | 3 | 保存学校官网专业介绍和培养方案 |
 | `transfer_policy_sources` | 4 | 保存转专业政策 |
 | `major_streaming_sources` | 4 | 保存大类分流政策 |
@@ -935,7 +936,7 @@ data_gap_detection
 - 已完成数据库别名初始化脚本：`scripts/setup_entity_aliases.py`，会创建/维护 `entity_aliases` 与 `entity_alias_candidates`。
 - 已修复 MySQL CLI 长文本换行解析问题，`major_lookup` 不会再把专业介绍里的“关键词/课程列表”拆成假候选记录。
 - 已完成 `major_lookup` 数据库别名解析，真实库验证“计科”返回“计算机科学与技术”，“软工”返回“软件工程”。
-- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 123 个测试通过；自然语言入口专项测试覆盖 13 个场景，统一入口专项测试覆盖 9 个场景，缓存/日志/缺口队列专项测试覆盖 5 个场景。
+- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 125 个测试通过；自然语言入口专项测试覆盖 13 个场景，统一入口专项测试覆盖 9 个场景，缓存/日志/缺口队列专项测试覆盖 7 个场景。
 - 当前烟测用例矩阵已覆盖上一轮 23 个工具入口；`comparison_query` 与新补的 3 个保守接口已做抽样验证，仍待补进批量矩阵。
 
 第一阶段完成时应满足：

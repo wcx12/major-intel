@@ -21,7 +21,7 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 当前仍未完成：
 
 - 大类分流、招生政策、考公映射已有保守 function call 接口，但官方证据和正式判定仍未完成。
-- 动态 RAG/人工复核闭环：`data_gap_queue` 已能记录缺口，但联网找源、抽取、校验和人工审核写回还没接通。
+- 动态 RAG/人工复核闭环：`data_gap_queue` 已能记录缺口，并能生成本地证据检索任务；联网找源、抽取、校验和人工审核写回还没接通。
 - 校专业级就业事实库：就业地域分布、薪资分布、Top 公司、升学去向、学校官网专业介绍证据链。
 
 更细的阶段性状态见 [docs/status/current-state.md](docs/status/current-state.md)。
@@ -217,7 +217,7 @@ python scripts/retrieval_agent_entrypoint.py "广东物理 580 想学计算机" 
 
 ## 查询日志、缓存与缺口队列
 
-已新增 [scripts/agent_query_storage.py](scripts/agent_query_storage.py)，负责创建和维护四类运营表：
+已新增 [scripts/agent_query_storage.py](scripts/agent_query_storage.py)，负责创建和维护六类运营表：
 
 | 表 | 作用 |
 |---|---|
@@ -225,6 +225,8 @@ python scripts/retrieval_agent_entrypoint.py "广东物理 580 想学计算机" 
 | `retrieval_cache` | 缓存同一规范化查询的结果，减少重复查库和重复生成 |
 | `agent_tool_traces` | 将每次工具调用拆成可检索的行，便于排查和统计 |
 | `data_gap_queue` | 记录本地库无法可靠回答的缺口，供后续联网 agent 或人工复核处理 |
+| `source_documents` | 保存后续联网/人工补证据得到的网页、PDF、招生章程等来源 |
+| `data_gap_evidence_tasks` | 把 pending 缺口转成“该搜索什么、优先搜哪些来源”的本地任务 |
 
 建表：
 
@@ -236,6 +238,18 @@ python scripts/agent_query_storage.py
 
 ```powershell
 python scripts/agent_query_storage.py --print-sql
+```
+
+查看待补证据任务，不写库：
+
+```powershell
+python scripts/agent_query_storage.py --plan-gap-tasks --limit 10
+```
+
+将 `data_gap_queue.pending` 转成 `data_gap_evidence_tasks.ready`：
+
+```powershell
+python scripts/agent_query_storage.py --enqueue-gap-tasks --limit 10
 ```
 
 缓存键第一版由以下内容计算：
@@ -250,6 +264,7 @@ agent-cache-v1 + 规范化问题 + mode + route + intent + slots + tool_plan
 - `retrieval_cache` 能写入。
 - `agent_tool_traces` 能写入。
 - `data_gap_queue` 能在结果存在 `data_gaps` 或关键 `not_found` 时去重入队。
+- `data_gap_evidence_tasks` 能把缺口生成稳定搜索任务，供后续联网 agent 或人工复核消费。
 - 同一问题第二次查询能返回 `cache_hit: true`。
 
 ## 常用命令
@@ -344,13 +359,15 @@ OK
 已完成：
 
 - 新建 `data_gap_queue` 表。
+- 新建 `source_documents` 与 `data_gap_evidence_tasks` 表。
 - 统一入口执行后扫描 `data_gaps`、`warnings`、`status`。
 - 同一个缺口做去重和计数，避免重复刷屏。
 - 记录用户问题、规范化槽位、缺失字段、已有字段、建议来源和预期写回目标。
+- 可把 `pending` 缺口转成稳定的本地证据任务，明确搜索词、优先来源和预期写回目标。
 
 仍未完成：
 
-- 让联网 agent 消费队列并自动找官方来源。
+- 让联网 agent 消费 `data_gap_evidence_tasks.ready` 并自动找官方来源。
 - 抽取结果的人工复核、冲突处理和写回事实表。
 - 对校专业级就业、官网专业介绍、官方转专业政策、真实分流比例、招生章程规则做稳定事实库。
 
@@ -418,11 +435,14 @@ OK
 
 目标：当本地库没有数据时，系统自动补证据，但不直接编事实。
 
+当前已完成本地前置层：`data_gap_queue.pending` 可以生成 `data_gap_evidence_tasks.ready`，同时预留 `source_documents` 作为证据落库表。下一步才是真正的联网搜索、抓取、抽取和人工复核。
+
 推荐流程：
 
 ```text
 统一入口发现缺口
   -> 写 data_gap_queue
+  -> 生成 data_gap_evidence_tasks
   -> SourceDiscoveryAgent 找官方来源
   -> CrawlerAgent 抓网页/PDF
   -> ExtractorAgent 抽取结构化字段
