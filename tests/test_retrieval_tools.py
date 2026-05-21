@@ -803,6 +803,86 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertIn("结构化并列", result["scope_notes"][0])
         self.assertIn("edu_university", result["source_tables"])
 
+    def test_major_streaming_policy_lookup_returns_gap_with_group_context(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_major", [MAJOR]),
+                    (
+                        "FROM edu_college_specialty_group g",
+                        [
+                            {
+                                "year": "2025",
+                                "province": "33",
+                                "group_code": "001",
+                                "group_name": "物化组",
+                                "group_type": "综合",
+                                "group_plan_count": "120",
+                                "allow_adjustment": "1",
+                                "special_code": "080901",
+                                "special_name": "计算机科学与技术",
+                                "major_plan_count": "80",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.major_streaming_policy_lookup(
+            school_text="杭州电子科技大学",
+            major_text="计科",
+            province="浙江",
+            year=2025,
+        )
+
+        self.assertEqual(result["status"], "partial")
+        self.assertIn("官方大类分流政策", result["data_gaps"])
+        self.assertEqual(result["data"]["group_context"]["data"]["groups"][0]["group_code"], "001")
+
+    def test_civil_service_mapping_wraps_role_samples_as_non_final_judgement(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_major", [MAJOR]),
+                    (
+                        "FROM civil_service_major_role_candidates c",
+                        [
+                            {
+                                "role_id": "28167",
+                                "year": "2026",
+                                "department_name": "中央直属机关事务管理局",
+                                "job_name": "信息管理岗位",
+                                "position_code": "100110001001",
+                                "province": "北京",
+                                "major_code": "080901",
+                                "major_name": "计算机科学与技术",
+                                "profession_text": "080901计算机科学与技术",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.civil_service_mapping("计算机科学与技术", year=2026)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["data"]["role_samples"]["data"]["roles"][0]["job_name"], "信息管理岗位")
+        self.assertIn("正式可报条件判定", result["data_gaps"])
+        self.assertIn("不能直接判断可报", result["scope_notes"][0])
+
+    def test_policy_rule_lookup_returns_official_policy_gap(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_university", [SCHOOL])]))
+
+        result = tools.policy_rule_lookup("杭州电子科技大学", policy_type="单科限制", province="浙江", year=2025)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["data"]["school"]["name"], "杭州电子科技大学")
+        self.assertIn("官方招生章程原文", result["data_gaps"])
+        self.assertIn("必须优先学校官网", result["scope_notes"][0])
+
     def test_major_market_reference_uses_ingested_market_tables(self):
         tools = RetrievalTools(
             FakeClient(

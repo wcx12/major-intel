@@ -13,7 +13,7 @@
 
 当前结论：
 
-- 24 个底层检索工具已经具备 function call schema 和 dispatcher。
+- 27 个底层检索工具已经具备 function call schema 和 dispatcher。
 - 自然语言总入口的详细设计从本文件开始作为主设计口径。
 - 离线规则入口已落地到 `scripts/natural_language_entrypoint.py`，并由 `tests/test_natural_language_entrypoint.py` 覆盖第一批高频场景。
 - DeepSeek function-call agent 已落地到 `scripts/deepseek_retrieval_agent.py`，统一入口已落地到 `scripts/retrieval_agent_entrypoint.py`。
@@ -215,9 +215,9 @@
 | Intent | 当前状态 | 第一版处理方式 |
 |---|---|---|
 | `comparison_query` | 已完成第一版 | 调用正式 `comparison_query`，返回学校/专业/校专业方案的结构化并列对比 |
-| `major_streaming_policy_lookup` | 工具未实现 | 返回 `data_gap`，写入分流政策缺口 |
-| `civil_service_mapping` | 只有样本检索 | 用 `civil_service_role_search` 返回岗位文本命中样本，明确不是可报判定 |
-| `policy_rule_lookup` | 工具未实现 | 返回 `data_gap`，等待联网 agent 或人工 |
+| `major_streaming_policy_lookup` | 保守接口已完成 | 返回专业组上下文和分流政策缺口，不编造比例 |
+| `civil_service_mapping` | 保守接口已完成 | 包装岗位文本命中样本，明确不是可报判定 |
+| `policy_rule_lookup` | 保守接口已完成 | 返回招生章程/政策规则缺口，等待联网 agent 或人工 |
 | 校专业级就业 Top 企业/薪资分布 | 数据缺口 | 返回 `data_gap`，不能用专业通用市场样本替代 |
 
 ## 路由规则
@@ -463,7 +463,7 @@ agent-cache-v1 + 规范化问题 + mode + route + intent + slots + tool_plan
 - 工具返回 `data_gaps`。
 - 用户问的是高风险事实，但本地库没有官方来源。
 - 工具状态为 `not_found`，且该事实对回答用户问题是关键。
-- intent 属于 `major_streaming_policy_lookup`、`policy_rule_lookup`、校专业级就业等当前未完成范围。
+- intent 属于 `major_streaming_policy_lookup`、`policy_rule_lookup`、校专业级就业等官方证据链尚未接入的范围。
 
 队列任务必须包含：
 
@@ -530,7 +530,7 @@ agent-cache-v1 + 规范化问题 + mode + route + intent + slots + tool_plan
 | 软件工程要选什么科？ | `subject_requirement_lookup` | `subject_requirement_lookup` | `ok` 或 `not_found` |
 | 杭电能转专业吗？ | `transfer_policy_lookup` | `transfer_policy_lookup` | `ok` / `partial` / `not_found` |
 | 这个专业组会不会调剂到冷门？ | `specialty_group_risk` | 无，先追问 | `needs_clarification` |
-| 软件工程适合考公吗？ | `civil_service_mapping` | `civil_service_role_search` | `partial` |
+| 软件工程适合考公吗？ | `civil_service_mapping` | `civil_service_mapping` | `partial` |
 | A 和 B 怎么选？ | `comparison_query` | `comparison_query` | `ok` 或 `needs_clarification` |
 
 ## 实施分期

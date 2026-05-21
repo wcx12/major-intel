@@ -336,6 +336,46 @@ _FUNCTION_SCHEMAS: dict[str, dict[str, Any]] = {
             ["target_type", "target_texts"],
         ),
     ),
+    "major_streaming_policy_lookup": _function_schema(
+        "major_streaming_policy_lookup",
+        "查询大类/专业分流政策和分流比例。当前没有官方分流比例事实时，只返回专业组上下文和 data_gaps，不编造比例。",
+        _object_schema(
+            {
+                "school_text": _string("学校名称、简称或代码。"),
+                "major_text": _string("可选，专业名称、简称或代码。"),
+                "province": _string("可选，招生省份；用于查专业组上下文。"),
+                "year": _integer("可选，招生或入学年份。", minimum=2000, maximum=2100),
+                "limit": _LIMIT,
+            },
+            ["school_text"],
+        ),
+    ),
+    "civil_service_mapping": _function_schema(
+        "civil_service_mapping",
+        "查询专业与考公岗位的映射线索。第一版包装岗位文本命中样本，并明确缺少正式可报条件判定。",
+        _object_schema(
+            {
+                "major_text": _string("专业名称、简称或代码。"),
+                "year": _integer("可选，国考/省考岗位年份。", minimum=2000, maximum=2100),
+                "province": _string("可选，岗位所在省份。"),
+                "limit": _LIMIT,
+            },
+            ["major_text"],
+        ),
+    ),
+    "policy_rule_lookup": _function_schema(
+        "policy_rule_lookup",
+        "查询招生章程、批次规则、身体限制、单科要求、语种限制等高风险政策。没有官方来源时只返回缺口。",
+        _object_schema(
+            {
+                "school_text": _string("学校名称、简称或代码。"),
+                "policy_type": _string("可选，政策类型，例如 单科限制、身体条件、外语语种、中外合作、校区规则。"),
+                "province": _string("可选，招生省份。"),
+                "year": _integer("可选，政策年份。", minimum=2000, maximum=2100),
+            },
+            ["school_text"],
+        ),
+    ),
     "admission_history": _function_schema(
         "admission_history",
         "查询学校、专业、省份、科类、年份条件下的历史录取记录。历史录取不代表未来保证。",

@@ -220,6 +220,21 @@ _SOURCE_TRACE_REGISTRY = {
         "scope_notes": ["对比工具复用画像、录取、就业摘要和市场样本；第一版只做结构化并列，不直接替用户下最终选择。"],
         "reliability": "B",
     },
+    "major_streaming_policy_lookup": {
+        "source_tables": ["edu_university", "edu_major", "edu_college_specialty_group", "edu_specialty_group_major"],
+        "scope_notes": ["大类分流第一版只返回专业组/专业线索和缺口，不提供真实分流比例。"],
+        "reliability": "C",
+    },
+    "civil_service_mapping": {
+        "source_tables": ["edu_major", "entity_aliases", "civil_service_major_role_candidates", "rysxai_civil_service_roles"],
+        "scope_notes": ["考公映射第一版只返回岗位文本命中样本和缺口，不做正式可报判定。"],
+        "reliability": "C",
+    },
+    "policy_rule_lookup": {
+        "source_tables": ["edu_university"],
+        "scope_notes": ["招生政策规则必须以学校官网、招生章程和考试院文件为准；第一版只记录缺口。"],
+        "reliability": "C",
+    },
     "major_market_reference": {
         "source_tables": ["edu_major", "entity_aliases", "rysxai_major_market_snapshots", "rysxai_major_job_samples"],
         "scope_notes": ["专业市场参考来自第三方招聘样本，不代表学校毕业去向或官方薪资。"],
@@ -1691,6 +1706,152 @@ class RetrievalTools:
             )
         return results
 
+    def major_streaming_policy_lookup(
+        self,
+        school_text: str,
+        major_text: str | None = None,
+        province: str | None = None,
+        year: int | None = None,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Return known context and gaps for major/class streaming policies.
+
+        当前本地库没有“入学后真实分流比例”或“冷门专业分流比例”的可靠事实
+        表。这个工具先把学校、专业和可观察专业组上下文整理出来，并明确进入
+        缺口队列所需的官方政策字段，避免把招生专业组计划数误写成分流结果。
+        """
+
+        school_result = self.school_lookup(school_text, limit=1)
+        if school_result["status"] != "ok":
+            return school_result | {"tool_name": "major_streaming_policy_lookup"}
+
+        major_result: dict[str, Any] | None = None
+        if major_text:
+            major_result = self.major_lookup(major_text, limit=1)
+            if major_result["status"] != "ok":
+                return major_result | {"tool_name": "major_streaming_policy_lookup"}
+
+        group_context = None
+        if major_text or province or year:
+            group_context = self.specialty_group_lookup(
+                school_text=school_text,
+                major_text=major_text,
+                province=province,
+                year=year,
+                limit=limit,
+            )
+
+        source_tables = _merge_source_tables(
+            school_result["source_tables"],
+            major_result["source_tables"] if major_result else [],
+            group_context.get("source_tables", []) if group_context else [],
+        )
+        warnings = []
+        if group_context and group_context.get("status") == "not_found":
+            warnings.extend(group_context.get("warnings") or [])
+
+        return tool_result(
+            "major_streaming_policy_lookup",
+            "partial",
+            {
+                "school_text": school_text,
+                "major_text": major_text,
+                "province": province,
+                "year": year,
+                "limit": limit,
+            },
+            normalized_slots={
+                **school_result["normalized_slots"],
+                **(major_result["normalized_slots"] if major_result else {}),
+                "province": province,
+                "year": year,
+            },
+            data={
+                "school": school_result["data"]["selected_school"],
+                "major": major_result["data"]["selected_major"] if major_result else {},
+                "group_context": group_context or {},
+            },
+            scope_notes=[
+                "当前没有官方入学后分流比例表，不能用招生专业组计划数代替真实分流比例。",
+                "该结果只提供学校/专业/专业组上下文和待补字段，应继续检索学校官网、学院培养方案或教务处分流办法。",
+            ],
+            data_gaps=["官方大类分流政策", "真实分流比例", "分流到冷门专业比例", "分流失败后的转专业/调剂规则"],
+            source_tables=source_tables,
+            warnings=warnings,
+        )
+
+    def civil_service_mapping(
+        self,
+        major_text: str,
+        year: int | None = None,
+        province: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Return civil-service samples plus the missing formal eligibility work.
+
+        `civil_service_role_search` 只能说明岗位专业文本里出现过某专业或代码。
+        正式“能不能报”还需要学历、学位、政治面貌、基层经历、应届身份、岗位
+        表解释等条件。这个 wrapper 把样本和缺口放在同一个正式 function call
+        里，方便 agent 调用但不会越权下结论。
+        """
+
+        role_result = self.civil_service_role_search(major_text, year=year, province=province, limit=limit)
+        if role_result["status"] in {"needs_clarification", "error"}:
+            return role_result | {"tool_name": "civil_service_mapping"}
+
+        return tool_result(
+            "civil_service_mapping",
+            "partial",
+            {"major_text": major_text, "year": year, "province": province, "limit": limit},
+            normalized_slots=role_result["normalized_slots"],
+            data={"major": role_result["data"].get("major", {}), "role_samples": role_result},
+            scope_notes=[
+                "当前只能返回岗位专业文本命中样本，不能直接判断可报。",
+                "正式可报需要同时校验专业目录、学历、学位、政治面貌、基层经历、应届身份和当年官方岗位表解释。",
+            ],
+            data_gaps=["正式可报条件判定", "官方岗位表来源", "专业代码人工确认映射", "学历/学位/政治面貌/基层经历条件解析"],
+            source_tables=role_result["source_tables"],
+            warnings=_distinct_texts(
+                list(role_result.get("warnings") or []) + ["命中岗位样本不等于最终可报，必须以官方招录公告和岗位表为准。"]
+            ),
+        )
+
+    def policy_rule_lookup(
+        self,
+        school_text: str,
+        policy_type: str | None = None,
+        province: str | None = None,
+        year: int | None = None,
+    ) -> dict[str, Any]:
+        """Return admissions-policy gaps for high-risk rules.
+
+        招生章程、身体条件、单科成绩、外语语种、中外合作、校区和专业录取规则
+        都属于高风险政策事实。当前本地库还没有官方章程证据链，因此第一版只
+        解析学校并返回待补字段，供动态 RAG 或人工复核继续处理。
+        """
+
+        school_result = self.school_lookup(school_text, limit=1)
+        if school_result["status"] != "ok":
+            return school_result | {"tool_name": "policy_rule_lookup"}
+
+        return tool_result(
+            "policy_rule_lookup",
+            "partial",
+            {"school_text": school_text, "policy_type": policy_type, "province": province, "year": year},
+            normalized_slots={**school_result["normalized_slots"], "province": province, "year": year},
+            data={
+                "school": school_result["data"]["selected_school"],
+                "policy_type": policy_type,
+                "known_policy_items": [],
+            },
+            scope_notes=[
+                "招生政策规则必须优先学校官网、招生章程和考试院文件；当前本地库没有可复核官方章程正文。",
+                "没有官方来源时不能给确定结论，应进入 data_gap_queue 或人工复核。",
+            ],
+            data_gaps=["官方招生章程原文", "身体条件限制", "单科成绩限制", "外语语种限制", "专业录取/调剂规则", "中外合作/校区规则"],
+            source_tables=school_result["source_tables"],
+        )
+
     def admission_history(
         self,
         school_text: str | None = None,
@@ -1895,6 +2056,22 @@ class RetrievalTools:
                 "admission_context": "录取历史上下文",
                 "employment_context": "就业/升学对比口径",
                 "decision_preferences": "考生偏好权重",
+            },
+            "major_streaming_policy_lookup": {
+                "official_streaming_policy": "官方大类分流政策",
+                "streaming_ratio": "真实分流比例",
+                "unpopular_major_ratio": "分流到冷门专业比例",
+            },
+            "civil_service_mapping": {
+                "official_role_table": "官方岗位表来源",
+                "eligibility_rules": "正式可报条件判定",
+                "manual_major_mapping": "专业代码人工确认映射",
+            },
+            "policy_rule_lookup": {
+                "official_admission_rule": "官方招生章程原文",
+                "single_subject_limit": "单科成绩限制",
+                "physical_exam_limit": "身体条件限制",
+                "language_limit": "外语语种限制",
             },
         }
         expected = missing_by_type.get(question_type, {})
@@ -3109,6 +3286,25 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dimension", dest="dimensions", action="append")
     p.add_argument("--limit", type=int, default=10)
 
+    p = subparsers.add_parser("major_streaming_policy_lookup")
+    p.add_argument("--school", required=True)
+    p.add_argument("--major")
+    p.add_argument("--province")
+    p.add_argument("--year", type=int)
+    p.add_argument("--limit", type=int, default=10)
+
+    p = subparsers.add_parser("civil_service_mapping")
+    p.add_argument("--major", required=True)
+    p.add_argument("--year", type=int)
+    p.add_argument("--province")
+    p.add_argument("--limit", type=int, default=20)
+
+    p = subparsers.add_parser("policy_rule_lookup")
+    p.add_argument("--school", required=True)
+    p.add_argument("--policy-type")
+    p.add_argument("--province")
+    p.add_argument("--year", type=int)
+
     p = subparsers.add_parser("admission_history")
     p.add_argument("--school")
     p.add_argument("--major")
@@ -3220,6 +3416,15 @@ def main(argv: list[str] | None = None) -> int:
             args.dimensions,
             args.limit,
         ),
+        "major_streaming_policy_lookup": lambda: tools.major_streaming_policy_lookup(
+            args.school,
+            args.major,
+            args.province,
+            args.year,
+            args.limit,
+        ),
+        "civil_service_mapping": lambda: tools.civil_service_mapping(args.major, args.year, args.province, args.limit),
+        "policy_rule_lookup": lambda: tools.policy_rule_lookup(args.school, args.policy_type, args.province, args.year),
         "admission_history": lambda: tools.admission_history(args.school, args.major, args.province, args.subject_type, args.years, args.limit),
         "major_market_reference": lambda: tools.major_market_reference(args.major, args.sample_limit),
         "civil_service_role_search": lambda: tools.civil_service_role_search(args.major, args.year, args.province, args.limit),

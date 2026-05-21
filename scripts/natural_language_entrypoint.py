@@ -118,6 +118,9 @@ INTENT_TOOL = {
     "subject_requirement_lookup": "subject_requirement_lookup",
     "specialty_group_risk": "specialty_group_risk",
     "comparison_query": "comparison_query",
+    "major_streaming_policy_lookup": "major_streaming_policy_lookup",
+    "civil_service_mapping": "civil_service_mapping",
+    "policy_rule_lookup": "policy_rule_lookup",
     "school_department_major_list": "school_department_major_list",
     "employment_summary": "employment_summary",
     "transfer_policy_lookup": "transfer_policy_lookup",
@@ -282,6 +285,10 @@ def _extract_slots(question: str) -> dict[str, Any]:
     elif "保" in question:
         slots["risk_preference"] = "保"
 
+    policy_type = _extract_policy_type(question)
+    if policy_type:
+        slots["policy_type"] = policy_type
+
     return slots
 
 
@@ -322,6 +329,31 @@ def _extract_comparison_slots(question: str) -> dict[str, Any]:
         return {"target_type": "major", "comparison_targets": major_targets}
 
     return {}
+
+
+def _extract_policy_type(question: str) -> str | None:
+    """Map common policy wording to a compact policy type label."""
+
+    policy_keywords = [
+        "单科限制",
+        "身体条件",
+        "外语语种",
+        "中外合作",
+        "校区规则",
+        "录取规则",
+        "批次规则",
+        "投档",
+        "退档",
+        "招生章程",
+    ]
+    for keyword in policy_keywords:
+        if keyword in question:
+            return keyword
+    if "单科" in question:
+        return "单科限制"
+    if "语种" in question:
+        return "外语语种"
+    return None
 
 
 def _ordered_alias_hits(question: str, aliases: dict[str, str]) -> list[str]:
@@ -370,6 +402,12 @@ def _detect_intent(question: str, slots: dict[str, Any]) -> str:
 
     if any(word in question for word in ["来源", "靠谱吗", "可信", "哪里来", "数据"]):
         return "source_trace_lookup"
+
+    if any(word in question for word in ["招生章程", "单科", "身体条件", "语种", "录取规则", "批次规则", "投档", "退档"]):
+        return "policy_rule_lookup"
+
+    if any(word in question for word in ["大类分流", "专业分流", "分流比例", "分流政策"]):
+        return "major_streaming_policy_lookup"
 
     if any(word in question for word in ["专业组", "组内", "调剂", "冷门", "风险"]):
         if any(word in question for word in ["调剂", "冷门", "风险"]):
@@ -501,6 +539,8 @@ def _missing_required_slots(intent: str, slots: dict[str, Any]) -> list[str]:
         "major_market_reference": ["major_text"],
         "subject_requirement_lookup": ["major_text"],
         "civil_service_mapping": ["major_text"],
+        "major_streaming_policy_lookup": ["school_text"],
+        "policy_rule_lookup": ["school_text"],
     }
     if intent == "comparison_query":
         missing = []
@@ -573,7 +613,38 @@ def _build_tool_plan(intent: str, slots: dict[str, Any]) -> list[dict[str, Any]]
         ]
 
     if intent == "civil_service_mapping":
-        return [_call("civil_service_role_search", {"major_text": slots.get("major_text"), "limit": 20})]
+        return [_call("civil_service_mapping", {"major_text": slots.get("major_text"), "limit": 20})]
+
+    if intent == "major_streaming_policy_lookup":
+        return [
+            _call(
+                "major_streaming_policy_lookup",
+                _compact_args(
+                    {
+                        "school_text": slots.get("school_text"),
+                        "major_text": slots.get("major_text"),
+                        "province": slots.get("province"),
+                        "year": slots.get("year"),
+                        "limit": 10,
+                    }
+                ),
+            )
+        ]
+
+    if intent == "policy_rule_lookup":
+        return [
+            _call(
+                "policy_rule_lookup",
+                _compact_args(
+                    {
+                        "school_text": slots.get("school_text"),
+                        "policy_type": slots.get("policy_type"),
+                        "province": slots.get("province"),
+                        "year": slots.get("year"),
+                    }
+                ),
+            )
+        ]
 
     if intent == "specialty_group_risk":
         return [

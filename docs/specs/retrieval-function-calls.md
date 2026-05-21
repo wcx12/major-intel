@@ -64,12 +64,13 @@
 
 - `已完成`：已经有本地检索方法、function schema、dispatcher 支持、单元测试和基础烟测。
 - `提前完成`：原计划不是第一阶段，但因为数据已经接入，已经先落地可调用工具。
+- `保守接口已完成`：已有 function call 入口、测试和口径保护，但因为缺官方证据或正式判定规则，只返回上下文、样本和缺口。
 - `部分完成`：底层数据或样本检索已具备，但还没有达到正式结论型工具的口径。
 - `待制作`：尚未实现工具入口。
 
 ### 当前已落地能力快照
 
-截至 2026-05-21，当前已经落地 24 个可调用检索入口：
+截至 2026-05-21，当前已经落地 27 个可调用检索入口：
 
 ```text
 school_lookup
@@ -92,6 +93,9 @@ transfer_policy_lookup
 fee_and_campus_lookup
 specialty_group_risk
 comparison_query
+major_streaming_policy_lookup
+civil_service_mapping
+policy_rule_lookup
 admission_history
 major_market_reference
 civil_service_role_search
@@ -112,6 +116,7 @@ data_gap_detection
 - 能查询学校院系专业关系、招生计划历史、学校级就业/升学摘要、转专业政策线索、学费线索和来源可信度说明。
 - 能对学校、专业、学校-专业方案做第一版结构化并列对比，但不会直接替用户下最终选择。
 - 能读取已接入的专业市场样本和考公岗位样本。
+- 能对大类分流、考公映射、招生章程/批次规则这类高风险问题返回保守接口结果：只给已有上下文、岗位样本和缺口，不编造官方比例、可报判定或政策结论。
 - 能识别当前问题还缺哪些本地数据，避免 agent 编造。
 
 已经完成的基础设施能力：
@@ -144,18 +149,18 @@ data_gap_detection
 | 3 | `comparison_query` | P1 | 学校/专业/方案对比 | B | 已完成 | 第一版复用画像、录取、就业和市场样本工具做结构化并列；不直接给最终选择 |
 | 3 | `employment_summary` | P1 | 学校级就业升学摘要 | B | 已完成 | 学校级摘要已独立成工具；不能代表校专业级就业 |
 | 3 | `major_market_reference` | P1 | 专业通用市场参考 | B | 提前完成 | 已接入 rysxai 市场样本表；明确不是校专业就业 |
-| 3 | `source_trace_lookup` | P1 | 解释数据来源和可信度 | B/C | 已完成 | 已登记 24 个正式工具的数据表、口径和可信度等级 |
+| 3 | `source_trace_lookup` | P1 | 解释数据来源和可信度 | B/C | 已完成 | 已登记 27 个正式工具的数据表、口径和可信度等级 |
 | 4 | `transfer_policy_lookup` | P1 | 查转专业政策 | C | 已完成 | 已接入 `rysxai_transfer_policies`；第三方线索必须官方复核 |
-| 4 | `major_streaming_policy_lookup` | P1 | 查大类分流政策和比例 | C | 待制作 | 需要新增或确认分流比例数据源 |
+| 4 | `major_streaming_policy_lookup` | P1 | 查大类分流政策和比例 | C | 保守接口已完成 | 返回学校/专业/专业组上下文和 `data_gaps`；真实分流比例仍需官方来源 |
 | 4 | `civil_service_role_search` | P1 | 专业到考公岗位样本检索 | C | 提前完成 | 已接入考公岗位样本；仅表示岗位文本命中，不等于最终可报 |
-| 4 | `civil_service_mapping` | P1 | 专业到考公岗位映射与可报判定 | C | 部分完成 | 样本检索已完成；正式映射、人工确认和可报判定未完成 |
+| 4 | `civil_service_mapping` | P1 | 专业到考公岗位映射与可报判定 | C | 保守接口已完成 | 包装岗位样本并返回正式可报判定缺口；不下最终可报结论 |
 | 4 | `fee_and_campus_lookup` | P2 | 学费、校区、住宿等 | B/C | 已完成 | 可返回学费线索；当前库无稳定校区字段时返回 `校区信息` 缺口 |
-| 4 | `policy_rule_lookup` | P2 | 招生政策、批次规则 | C | 待制作 | 需要联网/人工确认后入库 |
+| 4 | `policy_rule_lookup` | P2 | 招生政策、批次规则 | C | 保守接口已完成 | 返回招生章程、单科、身体、语种、调剂等官方证据缺口，等待联网/人工补证据 |
 
-未完成工具摘要：
+未完成能力摘要：
 
-- 第四阶段还缺 `major_streaming_policy_lookup`、`policy_rule_lookup`。
-- `civil_service_mapping` 不是从零开始，但还没有达到正式可调用工具标准；当前只有 `civil_service_role_search` 样本检索。
+- 计划表里的 function call 外壳已经全部进入注册表，后续 agent 可以统一调用。
+- `major_streaming_policy_lookup`、`policy_rule_lookup`、`civil_service_mapping` 仍没有官方证据链或正式判定规则，只能返回保守结果和缺口；后续重点是联网补证据、人工复核和结构化入库。
 
 ## 分阶段实现路线
 
@@ -780,11 +785,15 @@ edu_university_department_major
 
 ### `major_streaming_policy_lookup`
 
-查大类分流政策和比例，需要新增官方来源表。
+查大类分流政策和比例。当前已实现保守接口：先解析学校和可选专业，补充专业组上下文，并把“官方大类分流政策、真实分流比例、冷门专业分流比例、分流失败后的调剂或转专业规则”列入 `data_gaps`。
+
+注意：没有官方来源时，该工具不能生成真实比例或确定性风险结论。
 
 ### `civil_service_mapping`
 
-查专业对应考公岗位，需要新增专业代码到岗位的映射表。
+查专业对应考公岗位。当前已实现保守接口：复用 `civil_service_role_search` 返回岗位文本命中样本，同时明确这些样本不等于正式可报判定。
+
+注意：后续仍需要专业代码、学历、学位、政治面貌、基层经历、岗位专业目录等条件解析，才能升级成正式“是否可报”的判断。
 
 ### `fee_and_campus_lookup`
 
@@ -792,7 +801,9 @@ edu_university_department_major
 
 ### `policy_rule_lookup`
 
-查省份批次规则、平行志愿、专项计划、体检限制等政策问题，需要高可信官方来源。
+查省份批次规则、平行志愿、专项计划、体检限制、单科成绩限制、外语语种限制等政策问题。当前已实现保守接口：解析学校，返回待补官方招生章程和政策证据缺口。
+
+注意：没有招生章程或考试院官方来源时，该工具只允许返回缺口，不允许下确定性政策结论。
 
 ## 建议新增支撑表
 
@@ -913,7 +924,7 @@ data_gap_detection
 - 第一阶段 10 个 P0 工具已经全部实现。
 - 第二阶段 `rank_to_school_match`、`rank_to_major_match`、`specialty_group_lookup`、`plan_history`、`subject_requirement_lookup`、`school_department_major_list` 已完成第一版，可覆盖位次匹配、专业组、招生计划、选科和院系专业关系。
 - 第三阶段 `specialty_group_risk`、`comparison_query`、`employment_summary`、`major_market_reference`、`source_trace_lookup` 已完成第一版。
-- 第四阶段 `transfer_policy_lookup`、`fee_and_campus_lookup` 已完成第一版；`major_streaming_policy_lookup`、`policy_rule_lookup` 仍待制作；`civil_service_mapping` 仍是部分完成。
+- 第四阶段 `transfer_policy_lookup`、`fee_and_campus_lookup` 已完成第一版；`major_streaming_policy_lookup`、`civil_service_mapping`、`policy_rule_lookup` 已完成保守接口第一版。
 - `major_market_reference` 和 `civil_service_role_search` 已经提前实现，用于读取已经接入的市场样本和考公岗位样本。
 - 已完成 agent function schema 注册层：`scripts/retrieval_function_registry.py`。
 - 已完成自然语言总入口离线规则第一版：`scripts/natural_language_entrypoint.py`，可把高频中文问题自动映射到 intent、slots 和工具计划。
@@ -924,8 +935,8 @@ data_gap_detection
 - 已完成数据库别名初始化脚本：`scripts/setup_entity_aliases.py`，会创建/维护 `entity_aliases` 与 `entity_alias_candidates`。
 - 已修复 MySQL CLI 长文本换行解析问题，`major_lookup` 不会再把专业介绍里的“关键词/课程列表”拆成假候选记录。
 - 已完成 `major_lookup` 数据库别名解析，真实库验证“计科”返回“计算机科学与技术”，“软工”返回“软件工程”。
-- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 118 个测试通过；自然语言入口专项测试为 11 个场景，统一入口专项测试为 9 个场景，缓存/日志/缺口队列专项测试为 5 个场景。
-- 当前烟测用例矩阵已覆盖上一轮 23 个工具入口；`comparison_query` 真实库 smoke 仍待补进批量矩阵。
+- 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 123 个测试通过；自然语言入口专项测试覆盖 13 个场景，统一入口专项测试覆盖 9 个场景，缓存/日志/缺口队列专项测试覆盖 5 个场景。
+- 当前烟测用例矩阵已覆盖上一轮 23 个工具入口；`comparison_query` 与新补的 3 个保守接口已做抽样验证，仍待补进批量矩阵。
 
 第一阶段完成时应满足：
 

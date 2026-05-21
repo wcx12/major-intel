@@ -28,6 +28,9 @@ EXPECTED_FUNCTION_NAMES = {
     "fee_and_campus_lookup",
     "specialty_group_risk",
     "comparison_query",
+    "major_streaming_policy_lookup",
+    "civil_service_mapping",
+    "policy_rule_lookup",
     "admission_history",
     "major_market_reference",
     "civil_service_role_search",
@@ -201,6 +204,61 @@ class FakeRetrievalTools:
             data={"targets": [{"target_text": text} for text in target_texts]},
         )
 
+    def major_streaming_policy_lookup(
+        self,
+        school_text,
+        major_text=None,
+        province=None,
+        year=None,
+        limit=10,
+    ):
+        self.calls.append(
+            (
+                "major_streaming_policy_lookup",
+                {
+                    "school_text": school_text,
+                    "major_text": major_text,
+                    "province": province,
+                    "year": year,
+                    "limit": limit,
+                },
+            )
+        )
+        return tool_result(
+            "major_streaming_policy_lookup",
+            "partial",
+            {"school_text": school_text},
+            data_gaps=["官方大类分流政策", "真实分流比例"],
+        )
+
+    def civil_service_mapping(self, major_text, year=None, province=None, limit=20):
+        self.calls.append(
+            (
+                "civil_service_mapping",
+                {"major_text": major_text, "year": year, "province": province, "limit": limit},
+            )
+        )
+        return tool_result(
+            "civil_service_mapping",
+            "partial",
+            {"major_text": major_text},
+            data_gaps=["正式可报条件判定"],
+        )
+
+    def policy_rule_lookup(self, school_text, policy_type=None, province=None, year=None):
+        self.calls.append(
+            (
+                "policy_rule_lookup",
+                {"school_text": school_text, "policy_type": policy_type, "province": province, "year": year},
+            )
+        )
+        return tool_result(
+            "policy_rule_lookup",
+            "partial",
+            {"school_text": school_text},
+            data_gaps=["官方招生章程原文"],
+        )
+
 
 class RetrievalFunctionRegistryTests(unittest.TestCase):
     def test_schema_exports_every_first_batch_retrieval_function(self):
@@ -234,6 +292,9 @@ class RetrievalFunctionRegistryTests(unittest.TestCase):
         transfer_schema = schema_for_tool("transfer_policy_lookup")["function"]["parameters"]
         profile_schema = schema_for_tool("school_major_profile")["function"]["parameters"]
         comparison_schema = schema_for_tool("comparison_query")["function"]["parameters"]
+        streaming_schema = schema_for_tool("major_streaming_policy_lookup")["function"]["parameters"]
+        mapping_schema = schema_for_tool("civil_service_mapping")["function"]["parameters"]
+        policy_schema = schema_for_tool("policy_rule_lookup")["function"]["parameters"]
 
         self.assertEqual(score_schema["required"], ["province", "subject_type", "score"])
         self.assertEqual(match_schema["required"], ["province"])
@@ -242,6 +303,9 @@ class RetrievalFunctionRegistryTests(unittest.TestCase):
         self.assertEqual(transfer_schema["required"], ["school_text"])
         self.assertEqual(profile_schema["required"], ["school_text", "major_text"])
         self.assertEqual(comparison_schema["required"], ["target_type", "target_texts"])
+        self.assertEqual(streaming_schema["required"], ["school_text"])
+        self.assertEqual(mapping_schema["required"], ["major_text"])
+        self.assertEqual(policy_schema["required"], ["school_text"])
 
     def test_dispatcher_calls_named_tool_with_arguments(self):
         from scripts.retrieval_function_registry import call_retrieval_function

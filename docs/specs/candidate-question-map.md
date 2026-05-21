@@ -76,7 +76,7 @@
 
 ## 当前实现状态
 
-截至 2026-05-21，已有 24 个底层能力进入正式 function call 注册表，可以由后续 agent 自动调用：
+截至 2026-05-21，已有 27 个底层能力进入正式 function call 注册表，可以由后续 agent 自动调用：
 
 ```text
 school_lookup
@@ -99,6 +99,9 @@ transfer_policy_lookup
 fee_and_campus_lookup
 specialty_group_risk
 comparison_query
+major_streaming_policy_lookup
+civil_service_mapping
+policy_rule_lookup
 admission_history
 major_market_reference
 civil_service_role_search
@@ -112,10 +115,10 @@ data_gap_detection
 - `specialty_group_lookup`、`subject_requirement_lookup`、`school_department_major_list`、`plan_history` 已经补齐，能覆盖专业组、选科、院系专业和招生计划类问题。
 - `employment_summary`、`transfer_policy_lookup`、`fee_and_campus_lookup`、`specialty_group_risk` 已经进入正式工具层，但仍会在校专业级就业、官方转专业复核、稳定校区字段、真实分流比例处标注缺口。
 - `comparison_query` 已完成第一版，可对学校、专业、学校-专业方案做结构化并列对比，但不会直接替用户下最终选择。
-- `civil_service_mapping` 仍处于部分完成状态：当前只有 `civil_service_role_search` 样本检索，正式可报判定、人工确认和政策解释还没有完成。
+- `major_streaming_policy_lookup`、`civil_service_mapping`、`policy_rule_lookup` 已完成保守接口第一版：可以被 agent 调用并返回上下文、岗位样本或政策缺口，但不会编造真实分流比例、正式可报判定或招生章程结论。
 - 自然语言 agent 的离线规则入口、DeepSeek function-call agent 和统一入口已完成第一版，可以把高频中文问题自动归一到 intent、slots 和工具计划，也能把复杂问题交给 LLM 自动选择工具。
 - 缺口队列 `data_gap_queue` 已完成第一版，统一入口遇到本地缺口时可以去重入队。
-- 下一批主要剩 `major_streaming_policy_lookup`、`policy_rule_lookup`，以及让动态 RAG 和人工复核流程消费缺口队列；`comparison_query` 后续只需要增强复杂志愿方案解析。
+- 下一批重点不是再补 function call 外壳，而是让动态 RAG 和人工复核流程消费缺口队列，并为大类分流、招生章程、考公正式可报判定补官方证据链。
 
 ## 考生问题总分类
 

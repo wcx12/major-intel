@@ -21,7 +21,13 @@ class RecordingDispatcher:
 
     def __call__(self, tool_name, arguments):
         self.calls.append((tool_name, arguments))
-        status = "partial" if tool_name in {"school_major_profile", "civil_service_role_search"} else "ok"
+        status = "partial" if tool_name in {
+            "school_major_profile",
+            "civil_service_role_search",
+            "civil_service_mapping",
+            "major_streaming_policy_lookup",
+            "policy_rule_lookup",
+        } else "ok"
         return tool_result(
             tool_name,
             status,
@@ -29,7 +35,7 @@ class RecordingDispatcher:
             data={"echo": arguments},
             scope_notes=[f"{tool_name} scope"],
             data_gaps=["校专业级就业事实"] if tool_name == "school_major_profile" else [],
-            warnings=["考公岗位文本命中不等于正式可报"] if tool_name == "civil_service_role_search" else [],
+            warnings=["考公岗位文本命中不等于正式可报"] if tool_name in {"civil_service_role_search", "civil_service_mapping"} else [],
         )
 
 
@@ -146,8 +152,55 @@ class NaturalLanguageEntryPointTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["intent"], "civil_service_mapping")
-        self.assertEqual(dispatcher.calls, [("civil_service_role_search", {"major_text": "软件工程", "limit": 20})])
+        self.assertEqual(dispatcher.calls, [("civil_service_mapping", {"major_text": "软件工程", "limit": 20})])
         self.assertIn("不是正式可报判定", "".join(result["warnings"]))
+
+    def test_major_streaming_question_routes_to_policy_gap_tool(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("杭电计算机大类分流比例是多少？")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["intent"], "major_streaming_policy_lookup")
+        self.assertEqual(
+            dispatcher.calls,
+            [
+                (
+                    "major_streaming_policy_lookup",
+                    {
+                        "school_text": "杭州电子科技大学",
+                        "major_text": "计算机",
+                        "limit": 10,
+                    },
+                )
+            ],
+        )
+
+    def test_policy_rule_question_routes_to_policy_rule_lookup(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("杭电招生章程有没有单科限制？")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["intent"], "policy_rule_lookup")
+        self.assertEqual(
+            dispatcher.calls,
+            [
+                (
+                    "policy_rule_lookup",
+                    {
+                        "school_text": "杭州电子科技大学",
+                        "policy_type": "单科限制",
+                    },
+                )
+            ],
+        )
 
     def test_specialty_group_risk_without_context_asks_for_precise_slots(self):
         from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
