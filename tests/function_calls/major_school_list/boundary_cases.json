@@ -118,6 +118,98 @@
       "note": "同名跨层次专业；major_lookup 的 warning 必须传播到 major_school_list 最终结果"
     },
     {
+      "case_id": "ecommerce_zhejiang_suffix_warning",
+      "major": "电子商务",
+      "province_filter": "浙江省",
+      "school_level_filter": "本科",
+      "limit": 20,
+      "expected_warning_substrings": [
+        "同名专业存在多个层次"
+      ],
+      "note": "组合边界：省份后缀归一化后仍应传播 major_lookup 的跨层次 warning"
+    },
+    {
+      "case_id": "law_beijing_municipality_suffix",
+      "major": "法学",
+      "province_filter": "北京市",
+      "school_level_filter": "本科",
+      "limit": 50,
+      "note": "直辖市全称归一化；北京市应归一为北京，并与 oracle 召回一致"
+    },
+    {
+      "case_id": "ai_shanghai_municipality_suffix",
+      "major": "人工智能",
+      "province_filter": "上海市",
+      "school_level_filter": "本科",
+      "limit": 50,
+      "note": "直辖市全称归一化；上海市应归一为上海，并与 oracle 召回一致"
+    },
+    {
+      "case_id": "software_jiangsu_province_suffix",
+      "major": "软件工程",
+      "province_filter": "江苏省",
+      "school_level_filter": "本科",
+      "limit": 50,
+      "note": "普通省份后缀归一化；江苏省应归一为江苏，并覆盖热门工科专业"
+    },
+    {
+      "case_id": "cs_guangxi_autonomous_region_suffix",
+      "major": "计算机科学与技术",
+      "province_filter": "广西壮族自治区",
+      "school_level_filter": "本科",
+      "limit": 50,
+      "note": "自治区全称归一化；广西壮族自治区应归一为广西"
+    },
+    {
+      "case_id": "cs_inner_mongolia_autonomous_region_suffix",
+      "major": "计算机科学与技术",
+      "province_filter": "内蒙古自治区",
+      "school_level_filter": "本科",
+      "limit": 50,
+      "note": "自治区全称归一化；内蒙古自治区应归一为内蒙古"
+    },
+    {
+      "case_id": "cs_nationwide_211_flag",
+      "major": "计算机科学与技术",
+      "school_level_filter": "211",
+      "limit": 120,
+      "note": "学校层级结构化 flag；211 输入应同时匹配 level_name 和 is211"
+    },
+    {
+      "case_id": "software_nationwide_dual_class_flag",
+      "major": "软件工程",
+      "school_level_filter": "双一流",
+      "limit": 120,
+      "note": "学校层级结构化 flag；双一流输入应同时匹配 level_name、is_dual_class 和 dual_class"
+    },
+    {
+      "case_id": "limit_float_decimal",
+      "major": "计算机科学与技术",
+      "province_filter": "浙江",
+      "school_level_filter": "本科",
+      "limit": 1.5,
+      "expected_status": "needs_clarification",
+      "note": "非整数数值 limit；不能用 int() 截断后进入 SQL 层"
+    },
+    {
+      "case_id": "limit_bool_true",
+      "major": "计算机科学与技术",
+      "province_filter": "浙江",
+      "school_level_filter": "本科",
+      "limit": true,
+      "expected_status": "needs_clarification",
+      "note": "布尔值 limit；Python 中 bool 是 int 子类，但函数参数语义上必须拒绝"
+    },
+    {
+      "case_id": "limit_text",
+      "major": "计算机科学与技术",
+      "province_filter": "浙江",
+      "school_level_filter": "本科",
+      "limit": "ten",
+      "expected_status": "needs_clarification",
+      "note": "非数字文本 limit；应返回结构化参数澄清，不能抛出转换异常"
+    },
+    {
       "case_id": "limit_zero",
       "major": "计算机科学与技术",
       "province_filter": "浙江",

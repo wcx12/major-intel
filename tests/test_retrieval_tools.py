@@ -626,6 +626,69 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(negative["needs_clarification"], ["limit"])
         self.assertEqual(tools.client.queries, [])
 
+    def test_major_school_list_rejects_non_integral_limit_values_before_sql(self):
+        for bad_limit in [True, 1.5, "1.5", "ten"]:
+            with self.subTest(limit=repr(bad_limit)):
+                tools = RetrievalTools(FakeClient([]))
+
+                result = tools.major_school_list("计算机科学与技术", limit=bad_limit)
+
+                self.assertEqual(result["status"], "needs_clarification")
+                self.assertEqual(result["needs_clarification"], ["limit"])
+                self.assertIn("limit 必须是正整数", result["warnings"][0])
+                self.assertEqual(tools.client.queries, [])
+
+    def test_major_school_list_accepts_integer_string_limit_without_truncation(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_major", [MAJOR]),
+                    ("FROM edu_school_major sm", [{"school_name": "杭州电子科技大学"}]),
+                ]
+            )
+        )
+
+        result = tools.major_school_list("计算机科学与技术", province_filter="浙江", limit="2")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("LIMIT 2", tools.client.queries[-1])
+
+    def test_major_school_list_normalizes_common_province_full_names(self):
+        cases = [
+            ("北京市", "北京"),
+            ("上海市", "上海"),
+            ("广西壮族自治区", "广西"),
+            ("新疆维吾尔自治区", "新疆"),
+            ("内蒙古自治区", "内蒙古"),
+        ]
+
+        for province_filter, expected in cases:
+            with self.subTest(province_filter=province_filter):
+                tools = RetrievalTools(FakeClient([("FROM edu_major", [MAJOR])]))
+
+                result = tools.major_school_list("计算机科学与技术", province_filter=province_filter)
+
+                self.assertIn(f"u.province_name = '{expected}'", tools.client.queries[-1])
+                self.assertEqual(result["input"]["province_filter"], province_filter)
+                self.assertEqual(result["normalized_slots"]["province_filter"], expected)
+
+    def test_major_school_list_query_uses_distinct_for_dual_key_join(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_major", [MAJOR])]))
+
+        tools.major_school_list("计算机科学与技术", province_filter="浙江")
+
+        self.assertIn("SELECT DISTINCT sm.school_id, sm.school_name", tools.client.queries[-1])
+
+    def test_major_school_list_preserves_major_lookup_not_found_warning(self):
+        tools = RetrievalTools(FakeClient([]))
+
+        result = tools.major_school_list("不存在专业ABC", province_filter="浙江")
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["tool_name"], "major_school_list")
+        self.assertIn("本地库未命中专业实体", result["warnings"][0])
+        self.assertNotIn("FROM edu_school_major sm", "\n".join(tools.client.queries))
+
     def test_school_major_profile_filters_specialty_groups_by_context(self):
         tools = RetrievalTools(
             FakeClient(

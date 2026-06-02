@@ -21,7 +21,7 @@
 
 当前专项测试集中在本目录：
 
-- `boundary_cases.json`：真实 MySQL 审计用例清单。覆盖学校关联键混用、专业别名、模糊专业、专业不存在、省份归一化、985/双一流筛选、同名跨层次 warning 和 limit 边界。
+- `boundary_cases.json`：真实 MySQL 审计用例清单。覆盖学校关联键混用、专业别名、模糊专业、专业不存在、省份归一化、直辖市/自治区全称、985/211/双一流筛选、同名跨层次 warning 和 limit 边界。
 - `test_boundary_cases_manifest.py`：轻量单测，校验用例结构、case_id 唯一性和关键风险场景是否还在。
 - `test_boundary_audit.py`：轻量单测，校验审计脚本、oracle SQL 和分类逻辑。
 
@@ -36,14 +36,14 @@
 python -m pytest tests\function_calls\major_school_list\test_boundary_cases_manifest.py tests\function_calls\major_school_list\test_boundary_audit.py tests\test_retrieval_tools.py -q
 ```
 
-- 单测结果：`78 passed`。
+- 单测结果：`86 passed`。
 - 真实库审计命令：
 
 ```powershell
-python scripts\evaluate_major_school_list_boundaries.py --jsonl-report reports\major_school_list_boundary_eval_20260602.jsonl --markdown-report reports\major_school_list_boundary_eval_20260602.md
+python scripts\evaluate_major_school_list_boundaries.py --strict --jsonl-report reports\major_school_list_boundary_eval_20260602_expanded.jsonl --markdown-report reports\major_school_list_boundary_eval_20260602_expanded.md
 ```
 
-- 真实库审计结果：16 条用例，16 条通过，0 条失败。
+- 真实库审计结果：27 条用例，27 条通过，0 条失败。
 
 ## 6. 已知风险与待改善
 
@@ -51,6 +51,7 @@ python scripts\evaluate_major_school_list_boundaries.py --jsonl-report reports\m
 - 已修复 `province_filter` 常见省份后缀归一化，例如 `浙江省` 会按 `浙江` 查询。
 - 已修复 `major_lookup` 对同名跨层次专业产生的 warning 传播。
 - 已修复 `limit=0` / `limit<0` 的结构化参数校验。
+- 已补强 `limit` 类型边界：`true`、`1.5`、`"1.5"`、`"ten"` 这类非正整数形状不能被 `int()` 静默转换后进入 SQL 层。
 - 需要持续保护 `school_level_filter` 只使用有效学校层级字段。
 - 需要防止把开设学校列表误当成招生计划。
 

@@ -322,10 +322,14 @@ def _coerce_positive_limit(limit: Any, default: int = 5) -> int:
 
 
 def _is_positive_int(value: Any) -> bool:
-    try:
-        return int(value) >= 1
-    except (TypeError, ValueError):
+    if isinstance(value, bool):
         return False
+    if isinstance(value, int):
+        return value >= 1
+    if isinstance(value, str):
+        text = value.strip()
+        return text.isdecimal() and int(text) >= 1
+    return False
 
 
 _SCHOOL_EMPLOYMENT_SUMMARY_KEYS = [

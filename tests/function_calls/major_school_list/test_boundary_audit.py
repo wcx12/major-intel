@@ -17,11 +17,24 @@ class MajorSchoolListBoundaryAuditTests(unittest.TestCase):
         case_ids = {case.case_id for case in cases}
 
         self.assertIn("tests/function_calls/major_school_list", DEFAULT_CASES_PATH.as_posix())
-        self.assertGreaterEqual(len(cases), 12)
+        self.assertGreaterEqual(len(cases), 24)
         self.assertIn("cs_zhejiang_undergrad_dual_key", case_ids)
         self.assertIn("cs_zhejiang_province_suffix", case_ids)
+        self.assertIn("law_beijing_municipality_suffix", case_ids)
+        self.assertIn("cs_nationwide_211_flag", case_ids)
         self.assertIn("ecommerce_cross_level_warning", case_ids)
+        self.assertIn("ecommerce_zhejiang_suffix_warning", case_ids)
+        self.assertIn("limit_float_decimal", case_ids)
+        self.assertIn("limit_bool_true", case_ids)
+        self.assertIn("limit_text", case_ids)
         self.assertIn("limit_negative", case_ids)
+
+    def test_load_cases_preserves_invalid_limit_values_for_audit(self):
+        cases_by_id = {case.case_id: case for case in load_cases(DEFAULT_CASES_PATH)}
+
+        self.assertEqual(cases_by_id["limit_float_decimal"].limit, 1.5)
+        self.assertIs(cases_by_id["limit_bool_true"].limit, True)
+        self.assertEqual(cases_by_id["limit_text"].limit, "ten")
 
     def test_oracle_sql_matches_school_code_and_school_id(self):
         major = {"code": "080901", "special_name": "Computer Science"}
@@ -109,6 +122,38 @@ class MajorSchoolListBoundaryAuditTests(unittest.TestCase):
 
         self.assertEqual(classified.classification, "pass")
         self.assertEqual(classified.verdict, "pass")
+
+    def test_classify_result_marks_non_integral_limit_needs_clarification_as_pass(self):
+        for limit in [True, 1.5, "ten"]:
+            with self.subTest(limit=repr(limit)):
+                result = AuditResult(
+                    case=AuditCase(case_id="invalid_limit", major="Computer Science", limit=limit),
+                    tool_status="needs_clarification",
+                    tool_school_count=0,
+                    oracle_school_count=0,
+                    relation_counts={},
+                    missing_school_names=[],
+                )
+
+                classified = classify_result(result)
+
+                self.assertEqual(classified.classification, "pass")
+                self.assertEqual(classified.verdict, "pass")
+
+    def test_classify_result_flags_non_integral_limit_that_reaches_tool_results(self):
+        result = AuditResult(
+            case=AuditCase(case_id="float_limit", major="Computer Science", limit=1.5),
+            tool_status="ok",
+            tool_school_count=1,
+            oracle_school_count=1,
+            relation_counts={"matches_code": 1, "matches_school_id": 0, "other": 0},
+            missing_school_names=[],
+        )
+
+        classified = classify_result(result)
+
+        self.assertEqual(classified.classification, "input_validation_gap")
+        self.assertEqual(classified.verdict, "fail")
 
     def test_markdown_report_includes_school_samples_and_classification(self):
         result = classify_result(

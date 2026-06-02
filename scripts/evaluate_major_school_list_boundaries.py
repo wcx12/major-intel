@@ -36,7 +36,7 @@ class AuditCase:
     major: str
     province_filter: str | None = None
     school_level_filter: str | None = None
-    limit: int = 50
+    limit: Any = 50
     expected_status: str | None = None
     expected_warning_substrings: list[str] = field(default_factory=list)
     note: str = ""
@@ -88,7 +88,7 @@ def classify_result(result: AuditResult) -> AuditResult:
     errors = result.errors or []
     expected_status = result.case.expected_status
     if errors:
-        if result.case.limit < 1:
+        if _is_invalid_limit(result.case.limit):
             return replace(
                 result,
                 classification="input_validation_gap",
@@ -105,20 +105,20 @@ def classify_result(result: AuditResult) -> AuditResult:
             reason=f"工具状态不符合预期：期望 {expected_status}，实际 {result.tool_status}。",
         )
 
-    if result.case.limit < 1 and result.tool_status == "needs_clarification":
+    if _is_invalid_limit(result.case.limit) and result.tool_status == "needs_clarification":
         return replace(
             result,
             classification="pass",
             verdict="pass",
-            reason="limit 小于 1 时已返回结构化参数澄清，没有进入 SQL 层。",
+            reason="limit 不是有效正整数时已返回结构化参数澄清，没有进入 SQL 层。",
         )
 
-    if result.case.limit < 1:
+    if _is_invalid_limit(result.case.limit):
         return replace(
             result,
             classification="input_validation_gap",
             verdict="fail",
-            reason="limit 小于 1 时仍返回普通检索结果，未给出参数校验提示。",
+            reason="limit 不是有效正整数时仍返回普通检索结果，未给出参数校验提示。",
         )
 
     if expected_status and result.tool_status == expected_status and expected_status != "ok":
@@ -144,8 +144,9 @@ def classify_result(result: AuditResult) -> AuditResult:
                 reason=f"省份筛选未归一化：输入 {requested_province}，参考口径 {normalized_province} 有更多记录。",
             )
 
-    expected_visible = min(result.oracle_school_count, result.case.limit)
-    if result.oracle_school_count > result.case.limit and result.tool_school_count == result.case.limit:
+    limit_value = _limit_as_int(result.case.limit)
+    expected_visible = min(result.oracle_school_count, limit_value)
+    if result.oracle_school_count > limit_value and result.tool_school_count == limit_value:
         return replace(
             result,
             classification="limit_truncated",
@@ -229,7 +230,7 @@ def run_audit_case(case: AuditCase, client: MysqlCliClient) -> AuditResult:
         warnings=list(tool_payload.get("warnings") or []),
         data_gaps=list(tool_payload.get("data_gaps") or []),
     )
-    if not major or case.limit < 1:
+    if not major or _is_invalid_limit(case.limit):
         return classify_result(base_result)
 
     oracle_rows = client.query(build_oracle_major_school_sql(major, case.province_filter, case.school_level_filter))
@@ -327,7 +328,7 @@ def load_cases(path: Path | None) -> list[AuditCase]:
                 major=raw_case["major"],
                 province_filter=raw_case.get("province_filter"),
                 school_level_filter=raw_case.get("school_level_filter"),
-                limit=int(raw_case.get("limit", 50)),
+                limit=raw_case.get("limit", 50),
                 expected_status=raw_case.get("expected_status"),
                 expected_warning_substrings=list(raw_case.get("expected_warning_substrings") or []),
                 note=raw_case.get("note", ""),
@@ -365,6 +366,27 @@ def _missing_expected_warning(result: AuditResult) -> str:
         if not any(expected in warning for warning in warnings):
             return expected
     return ""
+
+
+def _is_invalid_limit(value: Any) -> bool:
+    return not _is_positive_int_like(value)
+
+
+def _is_positive_int_like(value: Any) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value >= 1
+    if isinstance(value, str):
+        text = value.strip()
+        return text.isdecimal() and int(text) >= 1
+    return False
+
+
+def _limit_as_int(value: Any) -> int:
+    if not _is_positive_int_like(value):
+        raise ValueError(f"invalid positive integer limit: {value!r}")
+    return int(str(value).strip())
 
 
 def _verdict_label(verdict: str) -> str:

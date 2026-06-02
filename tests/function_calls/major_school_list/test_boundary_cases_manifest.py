@@ -24,7 +24,7 @@ class MajorSchoolListBoundaryCasesManifestTests(unittest.TestCase):
             self.assertTrue(case["case_id"].strip())
             self.assertIsInstance(case["major"], str)
             self.assertTrue(case["major"].strip())
-            self.assertIsInstance(case["limit"], int)
+            self.assertNotIsInstance(case["limit"], (list, dict))
 
     def test_cases_cover_known_major_school_list_risk_classes(self):
         case_ids = {case["case_id"] for case in self.cases}
@@ -37,7 +37,14 @@ class MajorSchoolListBoundaryCasesManifestTests(unittest.TestCase):
             "broad_computer_needs_clarification",
             "major_not_found",
             "ecommerce_cross_level_warning",
+            "ecommerce_zhejiang_suffix_warning",
+            "law_beijing_municipality_suffix",
+            "ai_shanghai_municipality_suffix",
+            "cs_nationwide_211_flag",
             "cs_zhejiang_985_empty",
+            "limit_float_decimal",
+            "limit_bool_true",
+            "limit_text",
             "limit_zero",
             "limit_negative",
         }
@@ -52,7 +59,14 @@ class MajorSchoolListBoundaryCasesManifestTests(unittest.TestCase):
         self.assertIn("正整数", cases_by_id["limit_zero"]["note"])
         self.assertEqual(cases_by_id["limit_negative"].get("expected_status"), "needs_clarification")
         self.assertIn("正整数", cases_by_id["limit_negative"]["note"])
+        self.assertEqual(cases_by_id["limit_float_decimal"].get("expected_status"), "needs_clarification")
+        self.assertIn("截断", cases_by_id["limit_float_decimal"]["note"])
+        self.assertEqual(cases_by_id["limit_bool_true"].get("expected_status"), "needs_clarification")
+        self.assertIn("bool", cases_by_id["limit_bool_true"]["note"])
+        self.assertEqual(cases_by_id["limit_text"].get("expected_status"), "needs_clarification")
+        self.assertIn("非数字文本", cases_by_id["limit_text"]["note"])
         self.assertIn("同名专业存在多个层次", cases_by_id["ecommerce_cross_level_warning"]["expected_warning_substrings"])
+        self.assertIn("同名专业存在多个层次", cases_by_id["ecommerce_zhejiang_suffix_warning"]["expected_warning_substrings"])
 
 
 if __name__ == "__main__":
