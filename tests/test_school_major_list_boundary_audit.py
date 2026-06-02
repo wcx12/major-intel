@@ -85,22 +85,21 @@ class SchoolMajorListBoundaryAuditTests(unittest.TestCase):
         self.assertEqual(classified.classification, "pass")
         self.assertEqual(classified.verdict, "pass")
 
-    def test_classify_result_flags_negative_limit_as_input_validation_gap(self):
+    def test_classify_result_marks_invalid_limit_needs_clarification_as_pass(self):
         result = AuditResult(
             case=AuditCase(case_id="negative_limit", school="CUPL", limit=-1),
-            tool_status="process_error",
+            tool_status="needs_clarification",
             tool_major_count=0,
             oracle_major_count=0,
             oracle_all_major_count=0,
             relation_counts={},
             missing_major_names=[],
-            errors=["MySQL syntax error near LIMIT -1"],
         )
 
         classified = classify_result(result)
 
-        self.assertEqual(classified.classification, "input_validation_gap")
-        self.assertEqual(classified.verdict, "fail")
+        self.assertEqual(classified.classification, "pass")
+        self.assertEqual(classified.verdict, "pass")
 
     def test_classify_result_marks_positive_limit_truncation_before_key_mismatch(self):
         result = AuditResult(

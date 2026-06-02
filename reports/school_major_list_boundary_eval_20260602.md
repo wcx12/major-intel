@@ -1,15 +1,14 @@
 # school_major_list 边界审计报告
 
 - 用例总数：36
-- 通过：33
-- 失败：3
+- 通过：35
+- 失败：1
 - 需要复核：0
 
 ## 分类汇总
 
-- input_validation_gap（输入校验缺口）：2
 - limit_truncated（limit 正常截断）：1
-- pass（通过）：32
+- pass（通过）：34
 - status_mismatch（状态不符合预期）：1
 
 ## 逐项结果
@@ -391,21 +390,21 @@
 ### cupl_limit_0
 
 - 输入：school=中国政法大学, major_category=<none>, limit=0
-- 判定：失败
-- 分类：input_validation_gap（输入校验缺口）
-- 原因：limit 小于 1 时仍返回普通检索结果，未给出参数校验提示。
-- 工具结果：status=not_found, 专业数=0
-- 参考查询：筛选后专业数=24, 全部专业数=24
-- 学校关联键分布：matches_code=21, matches_school_id=3, other=0
-- 漏召回专业样本：哲学, 经济学, 金融工程, 法学, 政治学与行政学, 国际政治, 社会学, 社会工作, 思想政治教育, 侦查学
+- 判定：通过
+- 分类：pass（通过）
+- 原因：工具状态符合预期：needs_clarification。
+- 工具结果：status=needs_clarification, 专业数=0
+- 参考查询：筛选后专业数=0, 全部专业数=0
+- 学校关联键分布：-
+- 漏召回专业样本：-
 
 ### cupl_limit_negative
 
 - 输入：school=中国政法大学, major_category=<none>, limit=-1
-- 判定：失败
-- 分类：input_validation_gap（输入校验缺口）
-- 原因：limit 小于 1 时仍返回普通检索结果，未给出参数校验提示。
-- 工具结果：status=error, 专业数=0
+- 判定：通过
+- 分类：pass（通过）
+- 原因：工具状态符合预期：needs_clarification。
+- 工具结果：status=needs_clarification, 专业数=0
 - 参考查询：筛选后专业数=0, 全部专业数=0
 - 学校关联键分布：-
 - 漏召回专业样本：-

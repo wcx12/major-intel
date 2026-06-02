@@ -32,7 +32,7 @@ docs/specs/school-major-list-tool.md
 | `case_id` | 稳定用例 id，用于报告、断言和问题追踪。 |
 | `school` | 输入给工具的学校文本。可以是全称，也可以是故意保留的歧义简称。 |
 | `major_category` | 可选筛选词，用来覆盖专业名、专业类、门类和宽泛关键词。 |
-| `limit` | 返回条数上限。`0` 和负数目前作为已知暂缓项保留。 |
+| `limit` | 返回条数上限。必须是正整数；`0` 和负数应返回 `needs_clarification`，不能进入 SQL 层。 |
 | `expected_status` | 可选。用于标注 `not_found`、`needs_clarification` 等预期状态。 |
 | `note` | 人工解释：这条 case 为什么存在、对应哪类风险、是否暂不修。 |
 
@@ -80,7 +80,7 @@ python scripts/evaluate_school_major_list_boundaries.py `
 - `category_filter_gap`：`major_category` 没覆盖应覆盖的门类、专业类或专业名字段。
 - `catalog_noise`：同名跨层次目录导致本科/高职语义混淆。
 - `limit_truncated`：正数 limit 截断结果，属于可接受现象。
-- `input_validation_gap`：无效 limit 等参数校验暂未完成。
+- `input_validation_gap`：无效 limit 等参数没有被工具入口拦截，属于失败。
 
 ## 当前基线
 
@@ -88,18 +88,18 @@ python scripts/evaluate_school_major_list_boundaries.py `
 
 ```text
 用例总数：36
-通过：33
-失败：3
+通过：35
+失败：1
 需要复核：0
 ```
 
-剩余 3 个失败是暂不处理项：
+剩余 1 个失败是暂不处理项：
 
 - `huada_alias`：危险简称“华大”仍会误命中，需要后续统一处理学校简称歧义策略。
-- `cupl_limit_0`：`limit=0` 仍未提前做参数校验。
-- `cupl_limit_negative`：`limit=-1` 仍可能进入 SQL 层或返回错误。
 
-如果未来这 3 个暂缓项被修掉，需要同步更新：
+`cupl_limit_0` 和 `cupl_limit_negative` 已改为期望通过：工具应返回 `needs_clarification`，并要求补正 `limit`。
+
+如果未来 `huada_alias` 被修掉，需要同步更新：
 
 - `boundary_cases.json` 中的 `expected_status` 和 `note`。
 - `tests/function_calls/school_major_list/test_boundary_cases_manifest.py` 里的暂缓项断言。

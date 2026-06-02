@@ -424,6 +424,26 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertIn(f"sm.school_name = '{SCHOOL['name']}'", tools.client.queries[-1])
         self.assertIn("开设专业不等于某省当年招生专业", result["scope_notes"][0])
 
+    def test_school_major_list_rejects_zero_limit_before_querying_database(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_university", [SCHOOL])]))
+
+        result = tools.school_major_list("杭州电子科技大学", limit=0)
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["limit"])
+        self.assertIn("limit 必须是正整数", result["warnings"][0])
+        self.assertEqual(tools.client.queries, [])
+
+    def test_school_major_list_rejects_negative_limit_before_querying_database(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_university", [SCHOOL])]))
+
+        result = tools.school_major_list("杭州电子科技大学", limit=-1)
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["limit"])
+        self.assertIn("limit 必须是正整数", result["warnings"][0])
+        self.assertEqual(tools.client.queries, [])
+
     def test_school_major_list_category_filter_uses_catalog_category_fields(self):
         tools = RetrievalTools(
             FakeClient(

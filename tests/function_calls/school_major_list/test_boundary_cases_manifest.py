@@ -47,13 +47,15 @@ class SchoolMajorListBoundaryCasesManifestTests(unittest.TestCase):
         }
         self.assertTrue(required_case_ids.issubset(case_ids))
 
-    def test_expected_failure_cases_are_marked_explicitly(self):
+    def test_known_risk_cases_are_marked_explicitly(self):
         cases_by_id = {case["case_id"]: case for case in self.cases}
 
         self.assertEqual(cases_by_id["huada_alias"].get("expected_status"), "needs_clarification")
         self.assertIn("暂不修", cases_by_id["huada_alias"]["note"])
-        self.assertIn("暂不修", cases_by_id["cupl_limit_0"]["note"])
-        self.assertIn("暂不修", cases_by_id["cupl_limit_negative"]["note"])
+        self.assertEqual(cases_by_id["cupl_limit_0"].get("expected_status"), "needs_clarification")
+        self.assertIn("正整数", cases_by_id["cupl_limit_0"]["note"])
+        self.assertEqual(cases_by_id["cupl_limit_negative"].get("expected_status"), "needs_clarification")
+        self.assertIn("正整数", cases_by_id["cupl_limit_negative"]["note"])
 
 
 if __name__ == "__main__":

@@ -103,8 +103,20 @@ DEFAULT_CASES = [
     AuditCase("huada_alias", "华大", limit=20, expected_status="needs_clarification", note="dangerous fuzzy alias"),
     AuditCase("random_school", "不存在大学测试样本999", limit=20, expected_status="not_found", note="not found school"),
     AuditCase("cupl_limit_1", "中国政法大学", limit=1, note="limit truncation"),
-    AuditCase("cupl_limit_0", "中国政法大学", limit=0, note="invalid but currently accepted by CLI/method"),
-    AuditCase("cupl_limit_negative", "中国政法大学", limit=-1, note="invalid limit should not crash"),
+    AuditCase(
+        "cupl_limit_0",
+        "中国政法大学",
+        limit=0,
+        expected_status="needs_clarification",
+        note="invalid limit should be rejected before SQL",
+    ),
+    AuditCase(
+        "cupl_limit_negative",
+        "中国政法大学",
+        limit=-1,
+        expected_status="needs_clarification",
+        note="negative limit should be rejected before SQL",
+    ),
 ]
 
 
@@ -152,6 +164,14 @@ def classify_result(result: AuditResult) -> AuditResult:
             classification="status_mismatch",
             verdict="fail",
             reason=f"工具状态不符合预期：期望 {expected_status}，实际 {result.tool_status}。",
+        )
+
+    if result.case.limit < 1 and result.tool_status == "needs_clarification":
+        return replace(
+            result,
+            classification="pass",
+            verdict="pass",
+            reason="limit 小于 1 时已在工具入口返回结构化参数澄清，没有进入 SQL 层。",
         )
 
     if result.case.limit < 1:

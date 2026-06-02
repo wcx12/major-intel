@@ -238,13 +238,15 @@
       "case_id": "cupl_limit_0",
       "school": "中国政法大学",
       "limit": 0,
-      "note": "无效 limit；当前暂不修，保留为已知失败"
+      "expected_status": "needs_clarification",
+      "note": "无效 limit；应在工具入口要求正整数，不能进入 SQL 层"
     },
     {
       "case_id": "cupl_limit_negative",
       "school": "中国政法大学",
       "limit": -1,
-      "note": "负数 limit；当前暂不修，保留为已知失败"
+      "expected_status": "needs_clarification",
+      "note": "负数 limit；应在工具入口要求正整数，不能进入 SQL 层"
     }
   ]
 }

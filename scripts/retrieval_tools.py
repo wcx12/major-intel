@@ -774,12 +774,27 @@ class RetrievalTools:
         filter, otherwise some schools return only a partial major list.
         """
 
+        try:
+            safe_limit = int(limit)
+        except (TypeError, ValueError):
+            safe_limit = 0
+        if safe_limit < 1:
+            return tool_result(
+                "school_major_list",
+                "needs_clarification",
+                {"school_text": school_text, "major_category": major_category, "limit": limit},
+                data={"school": {}, "majors": []},
+                needs_clarification=["limit"],
+                scope_notes=["limit 控制返回条数，必须是正整数。"],
+                warnings=["limit 必须是正整数，不能为 0 或负数。"],
+            )
+
         school_result = self.school_lookup(school_text, limit=1)
         if school_result["status"] != "ok":
             return school_result | {"tool_name": "school_major_list"}
 
         school = school_result["data"]["selected_school"]
-        rows = self.client.query(_school_major_list_sql(school, major_category, limit))
+        rows = self.client.query(_school_major_list_sql(school, major_category, safe_limit))
         status = "ok" if rows else "not_found"
         return tool_result(
             "school_major_list",
