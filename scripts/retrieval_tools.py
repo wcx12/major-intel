@@ -312,6 +312,7 @@ def _source_trace_for_tool(tool_name: str) -> dict[str, Any] | None:
     trace = _SOURCE_TRACE_REGISTRY.get(tool_name)
     return dict(trace) if trace else None
 
+
 def _coerce_positive_limit(limit: Any, default: int = 5) -> int:
     try:
         return max(int(limit), 1)
@@ -662,7 +663,7 @@ class RetrievalTools:
         source table proves that major-level employment exists.
         """
 
-        school_result = self.school_lookup(school_text, limit=1)
+        school_result = self.school_lookup(school_text)
         if school_result["status"] != "ok":
             return school_result | {"tool_name": "school_profile"}
 
@@ -670,6 +671,19 @@ class RetrievalTools:
         dual_class = self.client.query(_dual_class_by_school_sql(school))
         subject_evals = self.client.query(_subject_evals_by_school_sql(school))
         latest_employment = _first_row(self.client.query(build_latest_employment_sql(school)))
+        if latest_employment:
+            latest_employment = _decode_json_fields(
+                latest_employment,
+                ["employment_data", "top_employment_industries", "top_employment_regions", "top_employers"],
+            )
+        data_gaps = []
+        warnings = []
+        if not latest_employment:
+            data_gaps.append("学校级就业/升学摘要")
+            warnings.append("本地库缺少学校级就业/升学摘要，不能据此判断就业质量。")
+        elif not _has_school_employment_summary(latest_employment):
+            data_gaps.append("学校级就业/升学摘要有效字段")
+            warnings.append("学校级就业/升学摘要只有年份或空字段，不能据此判断就业质量。")
 
         return tool_result(
             "school_profile",
@@ -686,12 +700,12 @@ class RetrievalTools:
                 "学校基础信息是学校级事实。",
                 "就业升学数据来自学校级表，不代表某个专业。",
             ],
-            source_tables=[
-                "edu_university",
-                "edu_dual_class",
-                "edu_university_subject_eval",
-                "edu_university_employment",
-            ],
+            data_gaps=data_gaps,
+            source_tables=_merge_source_tables(
+                school_result["source_tables"],
+                ["edu_university", "edu_dual_class", "edu_university_subject_eval", "edu_university_employment"],
+            ),
+            warnings=warnings,
         )
 
     def major_profile(self, major_text: str) -> dict[str, Any]:
@@ -1664,17 +1678,27 @@ class RetrievalTools:
             )
             for row in self.client.query(_employment_summary_sql(school, limit))
         ]
+        has_effective_summary = any(_has_employment_summary_record(row) for row in rows)
+        status = "not_found" if not rows else "ok" if has_effective_summary else "partial"
+        data_gaps = []
+        warnings = []
+        if not rows:
+            data_gaps.append("学校级就业/升学摘要")
+        elif not has_effective_summary:
+            data_gaps.append("学校级就业/升学摘要有效字段")
+            warnings.append("学校级就业/升学摘要只有年份或空字段，不能据此判断就业质量。")
         return tool_result(
             "employment_summary",
-            "ok" if rows else "not_found",
+            status,
             {"school_text": school_text, "limit": limit},
             normalized_slots=school_result["normalized_slots"],
             data={"school": school, "records": rows},
             scope_notes=[
                 "学校级就业/升学摘要不能代表某个专业的真实就业去向、薪资或升学率。",
             ],
-            data_gaps=[] if rows else ["学校级就业/升学摘要"],
+            data_gaps=data_gaps,
             source_tables=_merge_source_tables(school_result["source_tables"], ["edu_university_employment"]),
+            warnings=warnings,
         )
 
     def source_trace_lookup(self, tool_name: str | None = None) -> dict[str, Any]:

@@ -109,8 +109,8 @@ ORDER BY
     WHEN name IN ({alias_names}) THEN 3
     WHEN code IN ({alias_codes}) THEN 4
     WHEN short LIKE {like} THEN 5
-    WHEN old_name LIKE {like} THEN 6
-    WHEN name LIKE {like} THEN 7
+    WHEN name LIKE {like} THEN 6
+    WHEN old_name LIKE {like} THEN 7
     ELSE 9
   END,
   hits DESC
@@ -384,7 +384,7 @@ LIMIT {int(limit)}
 def build_latest_employment_sql(school: dict[str, Any]) -> str:
     school_id = str(school.get("school_id") or "")
     return f"""
-SELECT year, employment_rate, further_study_rate, avg_salary,
+SELECT year, employment_rate, further_study_rate, avg_salary, employment_data,
        top_employment_industries, top_employment_regions, top_employers
 FROM edu_university_employment
 WHERE (deleted IS NULL OR deleted = b'0')

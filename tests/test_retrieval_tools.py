@@ -127,6 +127,137 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertIn("存在歧义", result["warnings"][0])
         self.assertEqual(len(tools.client.queries), 1)
 
+    def test_school_profile_does_not_collapse_fuzzy_school_candidates_by_limit(self):
+        qinghua = {
+            **SCHOOL,
+            "school_id": "10003",
+            "code": "10003",
+            "name": "清华大学",
+            "province_name": "北京",
+        }
+        east_china_normal = {
+            **SCHOOL,
+            "school_id": "10051",
+            "code": "10269",
+            "name": "华东师范大学",
+            "province_name": "上海",
+        }
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("LIMIT 1", [qinghua]),
+                    ("LIMIT 5", [qinghua, east_china_normal]),
+                ]
+            )
+        )
+
+        result = tools.school_profile("华大")
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["data"]["selected_school"], {})
+        self.assertEqual({row["name"] for row in result["data"]["candidates"]}, {"清华大学", "华东师范大学"})
+        self.assertFalse(any("FROM edu_dual_class" in query for query in tools.client.queries))
+
+    def test_school_profile_preserves_alias_source_tables(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM entity_aliases a", [SCHOOL]),
+                    ("FROM edu_dual_class", []),
+                    ("FROM edu_university_subject_eval", []),
+                    ("FROM edu_university_employment", []),
+                ]
+            )
+        )
+
+        result = tools.school_profile("杭电")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["normalized_slots"]["school_name"], "杭州电子科技大学")
+        self.assertIn("entity_aliases", result["source_tables"])
+
+    def test_school_profile_marks_missing_employment_summary_gap(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_dual_class", []),
+                    ("FROM edu_university_subject_eval", [{"eval_round": "第四轮", "major_name": "软件工程"}]),
+                    ("FROM edu_university_employment", []),
+                ]
+            )
+        )
+
+        result = tools.school_profile("杭州电子科技大学")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["latest_employment"], {})
+        self.assertIn("学校级就业/升学摘要", result["data_gaps"])
+
+    def test_school_profile_marks_empty_employment_row_as_gap(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_dual_class", []),
+                    ("FROM edu_university_subject_eval", [{"eval_round": "第四轮", "major_name": "软件工程"}]),
+                    (
+                        "FROM edu_university_employment",
+                        [
+                            {
+                                "year": "2026",
+                                "employment_rate": None,
+                                "further_study_rate": None,
+                                "avg_salary": None,
+                                "top_employment_industries": None,
+                                "top_employment_regions": None,
+                                "top_employers": None,
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.school_profile("杭州电子科技大学")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["latest_employment"]["year"], "2026")
+        self.assertIn("学校级就业/升学摘要有效字段", result["data_gaps"])
+        self.assertIn("就业", result["warnings"][0])
+
+    def test_school_profile_treats_employment_data_json_as_useful_summary(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_dual_class", []),
+                    ("FROM edu_university_subject_eval", [{"eval_round": "第四轮", "major_name": "软件工程"}]),
+                    (
+                        "FROM edu_university_employment",
+                        [
+                            {
+                                "year": "2026",
+                                "employment_rate": None,
+                                "further_study_rate": None,
+                                "avg_salary": None,
+                                "employment_data": '{"rateOfBaoYan": 32.4}',
+                                "top_employment_industries": None,
+                                "top_employment_regions": None,
+                                "top_employers": None,
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.school_profile("北京邮电大学")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["latest_employment"]["employment_data"]["rateOfBaoYan"], 32.4)
+        self.assertEqual(result["data_gaps"], [])
+
     def test_major_lookup_returns_not_found_without_guessing(self):
         tools = RetrievalTools(FakeClient([("FROM edu_major", [])]))
 
@@ -1133,6 +1264,37 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["data"]["records"][0]["year"], "2024")
         self.assertIn("学校级就业", result["scope_notes"][0])
+
+    def test_employment_summary_returns_partial_for_year_only_record(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    (
+                        "FROM edu_university_employment",
+                        [
+                            {
+                                "year": "2026",
+                                "employment_rate": None,
+                                "further_study_rate": None,
+                                "avg_salary": None,
+                                "employment_data": None,
+                                "top_employment_industries": None,
+                                "top_employment_regions": None,
+                                "top_employers": None,
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.employment_summary("北京邮电大学")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["data"]["records"][0]["year"], "2026")
+        self.assertIn("学校级就业/升学摘要有效字段", result["data_gaps"])
+        self.assertIn("就业", result["warnings"][0])
 
     def test_source_trace_lookup_explains_registered_tool_sources(self):
         tools = RetrievalTools(FakeClient([]))

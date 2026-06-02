@@ -76,6 +76,16 @@ class SetupEntityAliasesTests(unittest.TestCase):
         self.assertIn("双鸭山大学", seed_sql)
         self.assertIn("中山大学", seed_sql)
         self.assertIn("10558", seed_sql)
+        self.assertIn("电子科技大学沙河校区", seed_sql)
+        self.assertIn("电子科技大学(沙河校区)", seed_sql)
+        self.assertIn("哈工深", seed_sql)
+        self.assertIn("哈尔滨工业大学(深圳)", seed_sql)
+        self.assertIn("北邮宏福", seed_sql)
+        self.assertIn("北京邮电大学(宏福校区)", seed_sql)
+        self.assertIn("人大苏州", seed_sql)
+        self.assertIn("中国人民大学(苏州校区)", seed_sql)
+        self.assertIn("山大威海", seed_sql)
+        self.assertIn("山东大学威海分校", seed_sql)
         self.assertIn("'school'", seed_sql)
         self.assertGreaterEqual(len(SCHOOL_ALIAS_SEEDS), 50)
 
@@ -95,6 +105,9 @@ class SetupEntityAliasesTests(unittest.TestCase):
             {"上海交通大学", "西安交通大学", "北京交通大学", "西南交通大学"},
             names_by_alias["交大"],
         )
+        self.assertEqual({"中国地质大学(北京)", "中国地质大学(武汉)"}, names_by_alias["地大"])
+        self.assertEqual({"中国矿业大学", "中国矿业大学(北京)"}, names_by_alias["矿大"])
+        self.assertEqual({"中国石油大学(北京)", "中国石油大学(华东)"}, names_by_alias["中石大"])
 
 
 if __name__ == "__main__":

@@ -28,6 +28,8 @@
 
 所有工具尽量返回统一外壳，便于 agent 合并结果。
 
+状态语义详见：[retrieval-status-semantics.md](retrieval-status-semantics.md)。
+
 ```json
 {
   "tool_name": "school_lookup",
@@ -382,6 +384,7 @@ entity_alias_candidates
 
 ```text
 edu_university
+entity_aliases（当学校名称通过确认别名解析时）
 edu_dual_class
 edu_university_subject_eval
 edu_university_employment
@@ -391,6 +394,9 @@ edu_university_employment
 
 - 学校基础信息是学校级事实。
 - 就业升学是学校级数据，不代表某个专业。
+- 学校实体解析成功但就业摘要缺失时，工具仍可返回 `ok` 的学校画像，同时在 `data_gaps` 标出 `学校级就业/升学摘要`。
+- 就业摘要只有年份，且 `employment_data`、就业率、升学率、薪资、行业/地域/雇主等核心字段都为空时，工具在 `data_gaps` 标出 `学校级就业/升学摘要有效字段`，上层 agent 不能据此判断就业质量。
+- 学校简称或模糊输入命中多个候选时，工具返回 `needs_clarification`，不能把第一候选当作目标学校。
 
 ### 4. `major_profile`
 

@@ -95,6 +95,14 @@ class LocalRetrievalMvpTests(unittest.TestCase):
         self.assertIn("name IN (", sql)
         self.assertIn("code IN (", sql)
 
+    def test_school_lookup_orders_current_name_matches_before_old_name_matches(self):
+        sql = resolve_school_sql("中国地质大学")
+
+        name_rank = sql.index("WHEN name LIKE '%中国地质大学%' THEN")
+        old_name_rank = sql.index("WHEN old_name LIKE '%中国地质大学%' THEN")
+
+        self.assertLess(name_rank, old_name_rank)
+
     def test_school_alias_candidate_sql_orders_without_distinct_mysql_conflict(self):
         sql = resolve_school_alias_candidates_sql("中大")
 
@@ -120,6 +128,14 @@ class LocalRetrievalMvpTests(unittest.TestCase):
         self.assertIn("sm.school_name = '杭州电子科技大学'", sql)
         self.assertIn("sm.major_code = '080202'", sql)
         self.assertNotIn("sm.school_id = '10124'", sql)
+
+    def test_latest_employment_sql_includes_structured_employment_data(self):
+        from scripts.local_retrieval_mvp import build_latest_employment_sql
+
+        sql = build_latest_employment_sql(SCHOOL)
+
+        self.assertIn("employment_data", sql)
+        self.assertIn("top_employment_industries", sql)
 
     def test_build_profile_marks_available_and_missing_data(self):
         profile = build_profile(
