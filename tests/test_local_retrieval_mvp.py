@@ -4,7 +4,9 @@ from scripts.local_retrieval_mvp import (
     _parse_mysql_tsv,
     build_profile,
     build_school_major_sql,
+    normalize_major_query,
     render_markdown_answer,
+    resolve_major_alias_candidates_sql,
     resolve_major_sql,
     resolve_school_alias_candidates_sql,
     resolve_school_sql,
@@ -57,6 +59,32 @@ class LocalRetrievalMvpTests(unittest.TestCase):
         self.assertIn("alias_normalized = '计科'", sql)
         self.assertNotIn("计算机科学与技术", sql)
         self.assertNotIn("special_name LIKE '%计科%'", sql)
+
+    def test_major_lookup_normalizes_common_admission_suffixes_before_sql(self):
+        self.assertEqual(normalize_major_query(" 软件工程专业 "), "软件工程")
+        self.assertEqual(normalize_major_query("软件工程(中外合作办学)"), "软件工程")
+        self.assertEqual(normalize_major_query("计算机科学与技术（师范）"), "计算机科学与技术")
+        self.assertEqual(normalize_major_query("临床医学五年制"), "临床医学")
+
+        sql = resolve_major_sql("软件工程(中外合作办学)")
+
+        self.assertIn("special_name = '软件工程'", sql)
+        self.assertNotIn("中外合作办学", sql)
+
+    def test_major_alias_candidate_sql_uses_confirmed_alias_table(self):
+        sql = resolve_major_alias_candidates_sql("电信")
+
+        self.assertIn("FROM entity_aliases a", sql)
+        self.assertIn("JOIN edu_major m", sql)
+        self.assertIn("a.entity_type = 'major'", sql)
+        self.assertIn("a.alias_normalized = '电信'", sql)
+        self.assertIn("ORDER BY a.confidence DESC", sql)
+
+    def test_major_lookup_orders_undergraduate_before_specialist_for_same_name(self):
+        sql = resolve_major_sql("临床医学")
+
+        self.assertIn("WHEN code REGEXP '^(0[1-9]|1[0-4])' THEN 0", sql)
+        self.assertIn("WHEN type_name LIKE '本科%' THEN 0", sql)
 
     def test_school_lookup_uses_confirmed_alias_table_for_short_names(self):
         sql = resolve_school_sql("杭电")

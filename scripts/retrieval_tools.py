@@ -35,6 +35,8 @@ from scripts.local_retrieval_mvp import (
     build_dual_class_sql,
     build_latest_employment_sql,
     build_subject_eval_sql,
+    normalize_major_query,
+    resolve_major_alias_candidates_sql,
     resolve_major_sql,
     resolve_school_alias_candidates_sql,
     resolve_school_sql,
@@ -310,6 +312,99 @@ def _source_trace_for_tool(tool_name: str) -> dict[str, Any] | None:
     trace = _SOURCE_TRACE_REGISTRY.get(tool_name)
     return dict(trace) if trace else None
 
+def _coerce_positive_limit(limit: Any, default: int = 5) -> int:
+    try:
+        return max(int(limit), 1)
+    except (TypeError, ValueError):
+        return default
+
+
+def _dedupe_major_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for row in rows:
+        key = (
+            str(row.get("code") or ""),
+            str(row.get("special_id") or ""),
+            str(row.get("special_name") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
+
+
+def _is_ordinary_undergraduate_major(row: dict[str, Any]) -> bool:
+    code = str(row.get("code") or "")
+    prefix = code[:2]
+    return prefix.isdigit() and 1 <= int(prefix) <= 14
+
+
+def _major_level_rank(row: dict[str, Any]) -> int:
+    code = str(row.get("code") or "")
+    type_name = str(row.get("type_name") or "")
+    degree = str(row.get("degree") or "")
+    if _is_ordinary_undergraduate_major(row) or type_name.startswith("本科") or degree:
+        return 0
+    if code.startswith("3"):
+        return 1
+    return 2
+
+
+def _major_match_rank(row: dict[str, Any], query_text: str) -> int:
+    if str(row.get("special_name") or "") == query_text:
+        return 0
+    if str(row.get("code") or "") == query_text:
+        return 1
+    if str(row.get("special_id") or "") == query_text:
+        return 2
+    if query_text and query_text in str(row.get("special_name") or ""):
+        return 5
+    return 9
+
+
+def _major_rank_key(row: dict[str, Any], query_text: str) -> tuple[Any, ...]:
+    raw_rank = row.get("ruanke_rank")
+    try:
+        ruanke_rank = int(raw_rank)
+        ruanke_missing = 0
+    except (TypeError, ValueError):
+        ruanke_rank = 999999
+        ruanke_missing = 1
+    raw_alias_confidence = row.get("alias_confidence")
+    try:
+        alias_confidence_rank = -float(raw_alias_confidence)
+        alias_confidence_missing = 0
+    except (TypeError, ValueError):
+        alias_confidence_rank = 0.0
+        alias_confidence_missing = 1
+    return (
+        _major_match_rank(row, query_text),
+        _major_level_rank(row),
+        alias_confidence_missing,
+        alias_confidence_rank,
+        ruanke_missing,
+        ruanke_rank,
+        str(row.get("code") or ""),
+    )
+
+
+def _rank_major_rows(rows: list[dict[str, Any]], query_text: str) -> list[dict[str, Any]]:
+    return _dedupe_major_rows(sorted(rows, key=lambda row: _major_rank_key(row, query_text)))
+
+
+def _major_row_exact(row: dict[str, Any], query_text: str) -> bool:
+    return any(str(row.get(key) or "") == query_text for key in ("special_name", "code", "special_id"))
+
+
+def _has_same_name_cross_level(rows: list[dict[str, Any]], selected: dict[str, Any], query_text: str) -> bool:
+    selected_name = str(selected.get("special_name") or "")
+    if selected_name != query_text:
+        return False
+    same_name_rows = [row for row in rows if str(row.get("special_name") or "") == selected_name]
+    return len({_major_level_rank(row) for row in same_name_rows}) > 1
+
 
 class RetrievalTools:
     """Collection of local retrieval functions callable by a future agent.
@@ -398,7 +493,43 @@ class RetrievalTools:
         if missing:
             return _needs("major_lookup", {"major_text": major_text}, missing)
 
-        rows = self.client.query(resolve_major_sql(major_text, limit=limit))
+        safe_limit = _coerce_positive_limit(limit)
+        fetch_limit = max(safe_limit, 20)
+        normalized_text = normalize_major_query(major_text)
+
+        alias_rows = _rank_major_rows(
+            self.client.query(resolve_major_alias_candidates_sql(major_text, limit=fetch_limit)),
+            normalized_text,
+        )
+        if len(alias_rows) > 1:
+            return tool_result(
+                "major_lookup",
+                "needs_clarification",
+                {"major_text": major_text, "limit": limit},
+                normalized_slots={"major_query": major_text, "normalized_major_text": normalized_text},
+                data={"selected_major": {}, "candidates": alias_rows[:safe_limit]},
+                scope_notes=["专业简称或口语别名命中多个已确认专业候选，不能自动选择其中一个。"],
+                needs_clarification=["major_text"],
+                source_tables=["edu_major", "entity_aliases"],
+                warnings=["专业输入存在歧义，请提供专业全称或专业代码后再查询。"],
+            )
+        if len(alias_rows) == 1:
+            selected = alias_rows[0]
+            return tool_result(
+                "major_lookup",
+                "ok",
+                {"major_text": major_text, "limit": limit},
+                normalized_slots={
+                    "major_name": selected.get("special_name"),
+                    "major_code": selected.get("code"),
+                    "normalized_major_text": normalized_text,
+                },
+                data={"selected_major": selected, "candidates": alias_rows[:safe_limit]},
+                scope_notes=["专业实体解析来自 edu_major 和 entity_aliases；短简称只使用已确认别名，不直接做短词模糊匹配。"],
+                source_tables=["edu_major", "entity_aliases"],
+            )
+
+        rows = _rank_major_rows(self.client.query(resolve_major_sql(major_text, limit=fetch_limit)), normalized_text)
         if not rows:
             return tool_result(
                 "major_lookup",
@@ -409,14 +540,37 @@ class RetrievalTools:
                 warnings=["本地库未命中专业实体，不能猜测专业。"],
             )
 
+        selected = rows[0]
+        if len(rows) > 1 and not _major_row_exact(selected, normalized_text):
+            return tool_result(
+                "major_lookup",
+                "needs_clarification",
+                {"major_text": major_text, "limit": limit},
+                normalized_slots={"major_query": major_text, "normalized_major_text": normalized_text},
+                data={"selected_major": {}, "candidates": rows[:safe_limit]},
+                scope_notes=["专业 fallback 检索命中多个候选，不能把第一条模糊候选当作已解析专业。"],
+                needs_clarification=["major_text"],
+                source_tables=["edu_major", "entity_aliases"],
+                warnings=["专业输入命中多个候选，请提供专业全称或专业代码后再查询。"],
+            )
+
+        warnings = []
+        if _has_same_name_cross_level(rows, selected, normalized_text):
+            warnings.append("同名专业存在多个层次，当前默认优先普通本科专业代码；如需专科或职业本科，请提供专业代码。")
+
         return tool_result(
             "major_lookup",
             "ok",
             {"major_text": major_text, "limit": limit},
-            normalized_slots={"major_name": rows[0].get("special_name"), "major_code": rows[0].get("code")},
-            data={"selected_major": rows[0], "candidates": rows},
+            normalized_slots={
+                "major_name": selected.get("special_name"),
+                "major_code": selected.get("code"),
+                "normalized_major_text": normalized_text,
+            },
+            data={"selected_major": selected, "candidates": rows[:safe_limit]},
             scope_notes=["专业实体解析来自 edu_major 和 entity_aliases；短简称只使用已确认别名，不直接做短词模糊匹配。"],
             source_tables=["edu_major", "entity_aliases"],
+            warnings=warnings,
         )
 
     def school_profile(self, school_text: str) -> dict[str, Any]:
@@ -3558,6 +3712,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = subparsers.add_parser("major_lookup")
     p.add_argument("--major", required=True)
+    p.add_argument("--limit", type=int, default=5)
 
     p = subparsers.add_parser("school_profile")
     p.add_argument("--school", required=True)
@@ -3725,7 +3880,7 @@ def main(argv: list[str] | None = None) -> int:
 
     dispatch = {
         "school_lookup": lambda: tools.school_lookup(args.school),
-        "major_lookup": lambda: tools.major_lookup(args.major),
+        "major_lookup": lambda: tools.major_lookup(args.major, args.limit),
         "school_profile": lambda: tools.school_profile(args.school),
         "major_profile": lambda: tools.major_profile(args.major),
         "school_major_list": lambda: tools.school_major_list(args.school, args.major_category, args.limit),

@@ -138,12 +138,64 @@ LIMIT {int(limit)}
 """.strip()
 
 
+def normalize_major_query(text: str) -> str:
+    """Normalize common admission-facing major suffixes before entity lookup."""
+
+    normalized = re.sub(r"\s+", "", str(text or "")).strip()
+    if not normalized:
+        return normalized
+
+    trailing_patterns = [
+        r"[（(][^（）()]{1,80}[）)]$",
+        r"专业$",
+        r"[一二三四五六七八九十\d]+年制$",
+    ]
+    changed = True
+    while changed:
+        changed = False
+        for pattern in trailing_patterns:
+            candidate = re.sub(pattern, "", normalized)
+            if candidate and candidate != normalized:
+                normalized = candidate
+                changed = True
+    return normalized
+
+
+def resolve_major_alias_candidates_sql(text: str, limit: int = 20) -> str:
+    normalized = sql_quote(_normalize_alias_query(normalize_major_query(text)))
+    return f"""
+SELECT m.special_id, m.code, m.special_name, m.type_name, m.level2_name, m.level3_name,
+       m.limit_year, m.degree, m.salaryavg, m.fivesalaryavg, m.job, m.is_what, m.learn_what,
+       m.do_what,
+       TRIM(REGEXP_REPLACE(REPLACE(REPLACE(COALESCE(NULLIF(m.job, ''), NULLIF(m.do_what, ''), ''), '\\r', ' '), '\\n', ' '), '<[^>]+>', '')) AS job_clean,
+       m.mostemploymentarea, m.mostemploymentindustry, m.mostemployedeposition,
+       a.alias_text, a.confidence AS alias_confidence
+FROM entity_aliases a
+JOIN edu_major m
+  ON (
+    (a.canonical_code <> '' AND (m.code = a.canonical_code OR m.special_id = a.canonical_code))
+    OR (a.canonical_code = '' AND m.special_name = a.canonical_name)
+  )
+WHERE a.entity_type = 'major'
+  AND a.alias_normalized = {normalized}
+  AND a.status = 'active'
+  AND (a.deleted IS NULL OR a.deleted = b'0')
+  AND m.deleted = b'0'
+ORDER BY a.confidence DESC,
+  {_major_level_priority_case_sql()},
+  m.ruanke_rank IS NULL,
+  m.ruanke_rank
+LIMIT {int(limit)}
+""".strip()
+
+
 def resolve_major_sql(text: str, limit: int = 5) -> str:
-    query = sql_quote(text)
-    like = sql_quote(f"%{text}%")
-    alias_names = _major_alias_subquery_sql(text, "canonical_name")
-    alias_codes = _major_alias_subquery_sql(text, "canonical_code")
-    fuzzy_allowed = _major_fuzzy_allowed(text)
+    normalized_text = normalize_major_query(text)
+    query = sql_quote(normalized_text)
+    like = sql_quote(f"%{normalized_text}%")
+    alias_names = _major_alias_subquery_sql(normalized_text, "canonical_name")
+    alias_codes = _major_alias_subquery_sql(normalized_text, "canonical_code")
+    fuzzy_allowed = _major_fuzzy_allowed(normalized_text)
     where_clauses = [
         f"special_name = {query}",
         f"code = {query}",
@@ -180,6 +232,7 @@ ORDER BY
     {' '.join(order_clauses)}
     ELSE 9
   END,
+  {_major_level_priority_case_sql()},
   ruanke_rank IS NULL,
   ruanke_rank
 LIMIT {int(limit)}
@@ -188,6 +241,18 @@ LIMIT {int(limit)}
 
 def _major_alias_subquery_sql(text: str, column: str) -> str:
     return _entity_alias_subquery_sql("major", text, column)
+
+
+def _major_level_priority_case_sql() -> str:
+    return """
+CASE
+    WHEN code REGEXP '^(0[1-9]|1[0-4])' THEN 0
+    WHEN type_name LIKE '本科%' THEN 0
+    WHEN COALESCE(degree, '') <> '' THEN 0
+    WHEN code REGEXP '^3[0-9]' THEN 1
+    ELSE 2
+  END
+""".strip()
 
 
 def _entity_alias_subquery_sql(entity_type: str, text: str, column: str) -> str:

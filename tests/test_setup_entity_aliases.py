@@ -28,7 +28,20 @@ class SetupEntityAliasesTests(unittest.TestCase):
         self.assertIn("计算机科学与技术", seed_sql)
         self.assertIn("080901", seed_sql)
         self.assertIn("软工", seed_sql)
+        self.assertIn("CS", seed_sql)
+        self.assertIn("AI", seed_sql)
+        self.assertIn("人工智能", seed_sql)
+        self.assertIn("网络安全", seed_sql)
+        self.assertIn("网络空间安全", seed_sql)
         self.assertGreaterEqual(len(MAJOR_ALIAS_SEEDS), 10)
+
+    def test_major_alias_seeds_keep_ambiguous_short_names_as_multi_candidates(self):
+        names_by_alias = {}
+        for alias_text, canonical_name, _canonical_code, _source, _confidence in MAJOR_ALIAS_SEEDS:
+            names_by_alias.setdefault(alias_text, set()).add(canonical_name)
+
+        self.assertEqual({"电子信息工程", "通信工程"}, names_by_alias["电信"])
+        self.assertGreaterEqual(len(names_by_alias["电子信息"]), 2)
 
     def test_school_alias_seed_sql_contains_common_confirmed_short_names(self):
         seed_sql = build_school_alias_seed_sql()
