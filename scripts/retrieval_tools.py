@@ -365,12 +365,28 @@ class RetrievalTools:
                 warnings=["本地库未命中学校实体，不能猜测学校。"],
             )
 
+        first_row = rows[0]
+        query_text = str(school_text or "")
+        first_row_exact = any(str(first_row.get(key) or "") == query_text for key in ("name", "code", "school_id"))
+        if len(rows) > 1 and not first_row_exact:
+            return tool_result(
+                "school_lookup",
+                "needs_clarification",
+                {"school_text": school_text, "limit": limit},
+                normalized_slots={"school_query": school_text},
+                data={"selected_school": {}, "candidates": rows},
+                scope_notes=["学校 fallback 检索命中多个候选，不能把第一条候选当作已解析学校。"],
+                needs_clarification=["school_text"],
+                source_tables=["edu_university", "entity_aliases"],
+                warnings=["学校输入命中多个候选，请提供学校全称、代码、省份或城市后再查询。"],
+            )
+
         return tool_result(
             "school_lookup",
             "ok",
             {"school_text": school_text, "limit": limit},
-            normalized_slots={"school_name": rows[0].get("name"), "school_id": rows[0].get("school_id")},
-            data={"selected_school": rows[0], "candidates": rows},
+            normalized_slots={"school_name": first_row.get("name"), "school_id": first_row.get("school_id")},
+            data={"selected_school": first_row, "candidates": rows},
             scope_notes=["学校实体解析来自 edu_university 和 entity_aliases；短简称只使用已确认别名，不直接猜测学校。"],
             source_tables=["edu_university", "entity_aliases"],
         )
