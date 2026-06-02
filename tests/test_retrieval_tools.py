@@ -397,7 +397,7 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertTrue(result["data"]["job_directions"][0].endswith("..."))
         self.assertIn("就业方向文本较长", result["warnings"][-1])
 
-    def test_school_major_list_uses_school_code_and_explains_scope(self):
+    def test_school_major_list_uses_both_school_code_and_internal_id(self):
         tools = RetrievalTools(
             FakeClient(
                 [
@@ -420,11 +420,112 @@ class RetrievalToolsTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["data"]["majors"][0]["major_name"], "计算机科学与技术")
-        self.assertIn("sm.school_id = '10336'", tools.client.queries[-1])
+        self.assertIn("sm.school_id IN ('10336', '10124')", tools.client.queries[-1])
+        self.assertIn(f"sm.school_name = '{SCHOOL['name']}'", tools.client.queries[-1])
         self.assertIn("开设专业不等于某省当年招生专业", result["scope_notes"][0])
 
+    def test_school_major_list_category_filter_uses_catalog_category_fields(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_school_major sm", [{"major_code": "080202", "major_name": "Engineering Major"}]),
+                ]
+            )
+        )
+
+        tools.school_major_list(SCHOOL["name"], major_category="Engineering")
+
+        sql = tools.client.queries[-1]
+        self.assertIn("sm.menlei_name LIKE '%Engineering%'", sql)
+        self.assertIn("sm.xueke_name LIKE '%Engineering%'", sql)
+        self.assertIn("sm.level3_name LIKE '%Engineering%'", sql)
+        self.assertIn("sm.major_name LIKE '%Engineering%'", sql)
+        self.assertIn("EXISTS (", sql)
+        self.assertIn("FROM edu_major m", sql)
+        self.assertIn("m.code", sql)
+        self.assertIn("sm.major_code", sql)
+        self.assertIn("sm.major_code IS NULL OR sm.major_code = ''", sql)
+        self.assertIn("m.special_name", sql)
+        self.assertIn("m.level2_name LIKE '%Engineering%'", sql)
+        self.assertIn("m.level3_name LIKE '%Engineering%'", sql)
+        self.assertIn("m.special_name LIKE '%Engineering%'", sql)
+
+    def test_school_major_list_can_use_domain_verified_department_major_source(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    (
+                        "FROM edu_university_department_major dm",
+                        [{"major_code": "080901", "major_name": "Computer Science"}],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.school_major_list(SCHOOL["name"], major_category="Computer")
+
+        self.assertEqual(result["status"], "ok")
+        sql = tools.client.queries[-1]
+        self.assertIn("FROM edu_university_department_major dm", sql)
+        self.assertIn("JOIN edu_university_department d ON d.id = dm.dept_id", sql)
+        self.assertIn("d.school_id = '10124'", sql)
+        self.assertIn("d.website_url LIKE '%hdu.edu.cn%'", sql)
+        self.assertIn("dm.major_name LIKE '%Computer%'", sql)
+        self.assertIn("NOT EXISTS", sql)
+        self.assertEqual(result["data"]["majors"][0]["major_name"], "Computer Science")
+
+    def test_school_major_list_catalog_join_prefers_major_code_before_name(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    (
+                        "FROM edu_university_department_major dm",
+                        [{"major_code": "080906", "major_name": "Digital Media Technology"}],
+                    ),
+                ]
+            )
+        )
+
+        tools.school_major_list(SCHOOL["name"], major_category="Digital Media")
+
+        sql = tools.client.queries[-1]
+        self.assertIn("m.code", sql)
+        self.assertIn("dm.major_code", sql)
+        self.assertIn("dm.major_code IS NULL OR dm.major_code = ''", sql)
+        self.assertIn("m.special_name", sql)
+
+    def test_school_major_list_catalog_join_accepts_major_code_suffixes(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    (
+                        "FROM edu_university_department_major dm",
+                        [{"major_code": "080904", "major_name": "Information Security"}],
+                    ),
+                ]
+            )
+        )
+
+        tools.school_major_list(SCHOOL["name"], major_category="Computer")
+
+        sql = tools.client.queries[-1]
+        self.assertIn("REPLACE(REPLACE(", sql)
+        self.assertIn("'K', ''", sql)
+        self.assertIn("'T', ''", sql)
+
     def test_school_major_list_returns_not_found_when_no_majors(self):
-        tools = RetrievalTools(FakeClient([("FROM edu_university", [SCHOOL])]))
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_university_department d", []),
+                ]
+            )
+        )
 
         result = tools.school_major_list("杭州电子科技大学", major_category="计算机类")
 

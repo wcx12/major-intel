@@ -1,0 +1,250 @@
+{
+  "description": "school_major_list 真实库边界审计用例。脚本会调用工具结果，并用独立 oracle SQL 对照召回数量和状态。",
+  "cases": [
+    {
+      "case_id": "hdu_all",
+      "school": "杭州电子科技大学",
+      "limit": 100,
+      "note": "院系专业源基线；应通过 hdu.edu.cn 域名校验优先使用 edu_university_department_major"
+    },
+    {
+      "case_id": "hdu_cs",
+      "school": "杭州电子科技大学",
+      "major_category": "计算机",
+      "limit": 50,
+      "note": "edu_school_major 缺杭电计算机；应从域名校验过的院系专业源召回"
+    },
+    {
+      "case_id": "hdu_software",
+      "school": "杭州电子科技大学",
+      "major_category": "软件工程",
+      "limit": 20,
+      "note": "院系专业源中的精确专业名"
+    },
+    {
+      "case_id": "hdu_digital_media",
+      "school": "杭州电子科技大学",
+      "major_category": "数字媒体技术",
+      "limit": 20,
+      "note": "同名跨层次专业；应按本科代码 080906 匹配目录，不应混入高职同名目录"
+    },
+    {
+      "case_id": "hdu_vocational_category_noise",
+      "school": "杭州电子科技大学",
+      "major_category": "电子与信息大类",
+      "limit": 20,
+      "expected_status": "not_found",
+      "note": "同名高职目录噪声不能把杭电本科数字媒体技术误归到电子与信息大类"
+    },
+    {
+      "case_id": "hdu_engineering",
+      "school": "杭州电子科技大学",
+      "major_category": "工学",
+      "limit": 50,
+      "note": "门类筛选；应结合 edu_major level2_name"
+    },
+    {
+      "case_id": "hdu_electronic_info",
+      "school": "杭州电子科技大学",
+      "major_category": "电子信息类",
+      "limit": 50,
+      "note": "专业类筛选；应结合 edu_major level3_name"
+    },
+    {
+      "case_id": "beijing_language_all",
+      "school": "北京语言大学",
+      "limit": 100,
+      "note": "code-key 基线"
+    },
+    {
+      "case_id": "beijing_language_cs",
+      "school": "北京语言大学",
+      "major_category": "计算机",
+      "limit": 50,
+      "note": "同号风险样例；北京语言大学 code 与其它表内部 id 可能冲突"
+    },
+    {
+      "case_id": "cqupt_all",
+      "school": "重庆邮电大学",
+      "limit": 100,
+      "note": "school_id/code 混合键基线"
+    },
+    {
+      "case_id": "cqupt_cs",
+      "school": "重庆邮电大学",
+      "major_category": "计算机",
+      "limit": 50,
+      "note": "分类筛选叠加混合学校键"
+    },
+    {
+      "case_id": "cqupt_software",
+      "school": "重庆邮电大学",
+      "major_category": "软件工程",
+      "limit": 20,
+      "note": "混合键下的精确专业"
+    },
+    {
+      "case_id": "cqupt_electronics",
+      "school": "重庆邮电大学",
+      "major_category": "电子信息类",
+      "limit": 50,
+      "note": "混合键下的专业类筛选"
+    },
+    {
+      "case_id": "nuaa_all",
+      "school": "南京航空航天大学",
+      "limit": 100,
+      "note": "混合键基线"
+    },
+    {
+      "case_id": "nuaa_cs",
+      "school": "南京航空航天大学",
+      "major_category": "计算机",
+      "limit": 50,
+      "note": "混合键下的计算机类筛选"
+    },
+    {
+      "case_id": "nuaa_aerospace",
+      "school": "南京航空航天大学",
+      "major_category": "航空航天",
+      "limit": 50,
+      "note": "领域词/专业类召回"
+    },
+    {
+      "case_id": "nankai_all",
+      "school": "南开大学",
+      "limit": 100,
+      "note": "混合键基线"
+    },
+    {
+      "case_id": "nankai_cs",
+      "school": "南开大学",
+      "major_category": "计算机",
+      "limit": 50,
+      "note": "院系域名源叠加分类筛选"
+    },
+    {
+      "case_id": "nankai_math",
+      "school": "南开大学",
+      "major_category": "数学",
+      "limit": 50,
+      "note": "院系域名源下的宽泛分类词"
+    },
+    {
+      "case_id": "cupl_cs",
+      "school": "中国政法大学",
+      "major_category": "计算机",
+      "limit": 50,
+      "note": "学校有专业记录但该分类无命中；工具和 oracle 一致时应判定通过"
+    },
+    {
+      "case_id": "cupl_law",
+      "school": "中国政法大学",
+      "major_category": "法学",
+      "limit": 50,
+      "note": "政法类学校法学专业召回"
+    },
+    {
+      "case_id": "cupl_politics",
+      "school": "中国政法大学",
+      "major_category": "政治学",
+      "limit": 50,
+      "note": "政法类相关专业类筛选"
+    },
+    {
+      "case_id": "uestc_cs",
+      "school": "电子科技大学",
+      "major_category": "计算机",
+      "limit": 50,
+      "note": "内部 id 与中国政法大学 code 冲突；必须避免同号误混"
+    },
+    {
+      "case_id": "uestc_electronics",
+      "school": "电子科技大学",
+      "major_category": "电子信息类",
+      "limit": 50,
+      "note": "域名校验过的院系专业源"
+    },
+    {
+      "case_id": "jlu_cs",
+      "school": "吉林大学",
+      "major_category": "计算机",
+      "limit": 50,
+      "note": "内部 id 与北京语言大学 code 冲突；必须避免同号误混"
+    },
+    {
+      "case_id": "jlu_law",
+      "school": "吉林大学",
+      "major_category": "法学",
+      "limit": 50,
+      "note": "域名校验过的院系专业源"
+    },
+    {
+      "case_id": "taizhou_cs",
+      "school": "台州学院",
+      "major_category": "计算机",
+      "limit": 50,
+      "note": "内部 id 与杭电 code 冲突；必须避免同号误混"
+    },
+    {
+      "case_id": "taizhou_medical",
+      "school": "台州学院",
+      "major_category": "临床医学",
+      "limit": 50,
+      "note": "域名校验过的精确专业"
+    },
+    {
+      "case_id": "xinzhou_cs",
+      "school": "忻州师范学院",
+      "major_category": "计算机",
+      "limit": 50,
+      "note": "学校 code 与杭电内部 id 冲突；必须避免同号误混"
+    },
+    {
+      "case_id": "nanda_alias",
+      "school": "南大",
+      "limit": 20,
+      "expected_status": "needs_clarification",
+      "note": "简称歧义应澄清"
+    },
+    {
+      "case_id": "jiaoda_alias",
+      "school": "交大",
+      "limit": 20,
+      "expected_status": "needs_clarification",
+      "note": "简称歧义应澄清"
+    },
+    {
+      "case_id": "huada_alias",
+      "school": "华大",
+      "limit": 20,
+      "expected_status": "needs_clarification",
+      "note": "危险简称；当前暂不修，保留为已知失败"
+    },
+    {
+      "case_id": "random_school",
+      "school": "不存在大学测试样本999",
+      "limit": 20,
+      "expected_status": "not_found",
+      "note": "不存在学校应安全 miss"
+    },
+    {
+      "case_id": "cupl_limit_1",
+      "school": "中国政法大学",
+      "limit": 1,
+      "note": "正数 limit 截断"
+    },
+    {
+      "case_id": "cupl_limit_0",
+      "school": "中国政法大学",
+      "limit": 0,
+      "note": "无效 limit；当前暂不修，保留为已知失败"
+    },
+    {
+      "case_id": "cupl_limit_negative",
+      "school": "中国政法大学",
+      "limit": -1,
+      "note": "负数 limit；当前暂不修，保留为已知失败"
+    }
+  ]
+}

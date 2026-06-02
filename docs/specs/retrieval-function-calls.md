@@ -441,6 +441,8 @@ entity_aliases（当专业名称通过确认别名解析时）
 
 用途：给学校查开设专业列表。
 
+详细口径见独立文档：[school-major-list-tool.md](school-major-list-tool.md)。该工具当前特别需要注意学校键混用、院系专业源、`major_category` 分类语义和本科/高职同名目录噪声。
+
 输入：
 
 ```json

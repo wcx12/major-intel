@@ -19,6 +19,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 # Direct CLI execution (`python scripts/retrieval_tools.py ...`) makes Python
 # treat `scripts/` as the import root.  The function-call tools import shared
@@ -767,11 +768,10 @@ class RetrievalTools:
     ) -> dict[str, Any]:
         """Return majors recorded for one school.
 
-        Existing data has a subtle key mismatch: `edu_university.school_id` is
-        not the same value as `edu_school_major.school_id`.  The school-major
-        table uses the university `code`, so the query must join/filter with
-        `selected_school.code`.  The test suite locks this down because using
-        `school_id` silently returns wrong-school rows.
+        Existing data has a subtle key mismatch: `edu_school_major.school_id`
+        may store either `edu_university.code` or `edu_university.school_id`.
+        The query must include both keys while keeping the exact school name
+        filter, otherwise some schools return only a partial major list.
         """
 
         school_result = self.school_lookup(school_text, limit=1)
@@ -2620,21 +2620,171 @@ def _school_major_list_sql(
     major_category: str | None,
     limit: int,
 ) -> str:
-    category_clause = ""
-    if major_category:
-        like = sql_quote(f"%{major_category}%")
-        category_clause = f"AND (sm.level3_name LIKE {like} OR sm.xueke_name LIKE {like} OR sm.major_name LIKE {like})"
+    category_clause = _school_major_category_clause(major_category)
+    department_category_clause = _department_major_category_clause(major_category)
+    school_id_values = _school_major_school_id_values(school)
+    school_id_clause = ", ".join(sql_quote(value) for value in school_id_values) or "''"
+    internal_school_id = sql_quote(school.get("school_id"))
+    department_domain_clause = _department_domain_clause(school, "d")
     return f"""
-SELECT sm.major_code, sm.major_name, sm.level_name, sm.limit_year, sm.nation_first_class,
-       sm.xueke_rank_score, sm.ruanke_level, sm.menlei_name, sm.xueke_name, sm.level3_name
+SELECT CONVERT(sm.major_code USING utf8mb4) COLLATE utf8mb4_unicode_ci AS major_code,
+       CONVERT(sm.major_name USING utf8mb4) COLLATE utf8mb4_unicode_ci AS major_name,
+       CONVERT(sm.level_name USING utf8mb4) COLLATE utf8mb4_unicode_ci AS level_name,
+       CONVERT(sm.limit_year USING utf8mb4) COLLATE utf8mb4_unicode_ci AS limit_year,
+       sm.nation_first_class,
+       CONVERT(sm.xueke_rank_score USING utf8mb4) COLLATE utf8mb4_unicode_ci AS xueke_rank_score,
+       CONVERT(sm.ruanke_level USING utf8mb4) COLLATE utf8mb4_unicode_ci AS ruanke_level,
+       CONVERT(sm.menlei_name USING utf8mb4) COLLATE utf8mb4_unicode_ci AS menlei_name,
+       CONVERT(sm.xueke_name USING utf8mb4) COLLATE utf8mb4_unicode_ci AS xueke_name,
+       CONVERT(sm.level3_name USING utf8mb4) COLLATE utf8mb4_unicode_ci AS level3_name,
+       CAST('edu_school_major' AS CHAR) COLLATE utf8mb4_unicode_ci AS record_source,
+       CAST(NULL AS CHAR) COLLATE utf8mb4_unicode_ci AS department_name,
+       CAST(NULL AS CHAR) COLLATE utf8mb4_unicode_ci AS department_url
 FROM edu_school_major sm
 WHERE (sm.deleted IS NULL OR sm.deleted = 0)
-  AND sm.school_id = {sql_quote(school.get('code') or school.get('school_id'))}
+  AND sm.school_id IN ({school_id_clause})
   AND sm.school_name = {sql_quote(school.get('name'))}
   {category_clause}
-ORDER BY sm.major_code
+  AND NOT EXISTS (
+      SELECT 1
+      FROM edu_university_department d
+      WHERE (d.deleted IS NULL OR d.deleted = b'0')
+        AND d.school_id = {internal_school_id}
+        AND {department_domain_clause}
+  )
+UNION ALL
+SELECT CONVERT(dm.major_code USING utf8mb4) COLLATE utf8mb4_unicode_ci AS major_code,
+       CONVERT(dm.major_name USING utf8mb4) COLLATE utf8mb4_unicode_ci AS major_name,
+       MAX(CONVERT(dm.education_level USING utf8mb4) COLLATE utf8mb4_unicode_ci) AS level_name,
+       MAX(CONVERT(m.limit_year USING utf8mb4) COLLATE utf8mb4_unicode_ci) AS limit_year,
+       MAX(dm.is_nation_first_class) AS nation_first_class,
+       MAX(CONVERT(dm.subject_eval_level USING utf8mb4) COLLATE utf8mb4_unicode_ci) AS xueke_rank_score,
+       CAST(NULL AS CHAR) COLLATE utf8mb4_unicode_ci AS ruanke_level,
+       MAX(CONVERT(m.level2_name USING utf8mb4) COLLATE utf8mb4_unicode_ci) AS menlei_name,
+       CAST(NULL AS CHAR) COLLATE utf8mb4_unicode_ci AS xueke_name,
+       MAX(CONVERT(m.level3_name USING utf8mb4) COLLATE utf8mb4_unicode_ci) AS level3_name,
+       CAST('edu_university_department_major' AS CHAR) COLLATE utf8mb4_unicode_ci AS record_source,
+       CONVERT(GROUP_CONCAT(DISTINCT d.dept_name ORDER BY d.dept_name SEPARATOR '、') USING utf8mb4) COLLATE utf8mb4_unicode_ci AS department_name,
+       MIN(CONVERT(d.website_url USING utf8mb4) COLLATE utf8mb4_unicode_ci) AS department_url
+FROM edu_university_department_major dm
+JOIN edu_university_department d ON d.id = dm.dept_id
+LEFT JOIN edu_major m
+  ON (m.deleted IS NULL OR m.deleted = 0 OR m.deleted = b'0')
+  AND (
+      REPLACE(REPLACE(CONVERT(m.code USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'K', ''), 'T', '') =
+      REPLACE(REPLACE(CONVERT(dm.major_code USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'K', ''), 'T', '')
+      OR (
+          (dm.major_code IS NULL OR dm.major_code = '')
+          AND CONVERT(m.special_name USING utf8mb4) COLLATE utf8mb4_unicode_ci = CONVERT(dm.major_name USING utf8mb4) COLLATE utf8mb4_unicode_ci
+      )
+  )
+WHERE (dm.deleted IS NULL OR dm.deleted = b'0')
+  AND (d.deleted IS NULL OR d.deleted = b'0')
+  AND d.school_id = {internal_school_id}
+  AND CONVERT(dm.school_id USING utf8mb4) COLLATE utf8mb4_unicode_ci = CONVERT(d.school_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+  AND dm.major_name IS NOT NULL
+  AND dm.major_name <> ''
+  AND {department_domain_clause}
+  {department_category_clause}
+GROUP BY dm.major_code, dm.major_name
+ORDER BY major_code, major_name
 LIMIT {int(limit)}
 """.strip()
+
+
+def _school_major_category_clause(major_category: str | None) -> str:
+    if not major_category:
+        return ""
+    like = sql_quote(f"%{major_category}%")
+    return f"""
+AND (
+    sm.menlei_name LIKE {like}
+    OR sm.xueke_name LIKE {like}
+    OR sm.level3_name LIKE {like}
+    OR sm.major_name LIKE {like}
+    OR EXISTS (
+        SELECT 1
+        FROM edu_major m
+        WHERE (m.deleted IS NULL OR m.deleted = 0 OR m.deleted = b'0')
+          AND (
+              REPLACE(REPLACE(CONVERT(m.code USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'K', ''), 'T', '') =
+              REPLACE(REPLACE(CONVERT(sm.major_code USING utf8mb4) COLLATE utf8mb4_unicode_ci, 'K', ''), 'T', '')
+              OR (
+                  (sm.major_code IS NULL OR sm.major_code = '')
+                  AND CONVERT(m.special_name USING utf8mb4) COLLATE utf8mb4_unicode_ci = CONVERT(sm.major_name USING utf8mb4) COLLATE utf8mb4_unicode_ci
+              )
+          )
+          AND (
+              m.level2_name LIKE {like}
+              OR m.level3_name LIKE {like}
+              OR m.special_name LIKE {like}
+          )
+    )
+)
+""".strip()
+
+
+def _department_major_category_clause(major_category: str | None) -> str:
+    if not major_category:
+        return ""
+    like = sql_quote(f"%{major_category}%")
+    return f"""
+AND (
+    dm.major_name LIKE {like}
+    OR m.level2_name LIKE {like}
+    OR m.level3_name LIKE {like}
+    OR m.special_name LIKE {like}
+)
+""".strip()
+
+
+def _department_domain_clause(school: dict[str, Any], alias: str) -> str:
+    domains = _school_domain_candidates(school)
+    if not domains:
+        return "1 = 0"
+    return "(" + " OR ".join(f"{alias}.website_url LIKE {sql_quote(f'%{domain}%')}" for domain in domains) + ")"
+
+
+def _school_domain_candidates(school: dict[str, Any]) -> list[str]:
+    domains: list[str] = []
+    seen: set[str] = set()
+    for key in ("school_site", "site"):
+        host = _hostname_from_url(school.get(key))
+        if not host:
+            continue
+        candidates = [host]
+        parts = host.split(".")
+        if host.endswith(".edu.cn") and len(parts) >= 3:
+            candidates.append(".".join(parts[-3:]))
+        elif len(parts) >= 2:
+            candidates.append(".".join(parts[-2:]))
+        for candidate in candidates:
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                domains.append(candidate)
+    return domains
+
+
+def _hostname_from_url(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if not text:
+        return ""
+    parsed = urlparse(text if "://" in text else f"https://{text}")
+    host = parsed.hostname or ""
+    if host.startswith("www."):
+        host = host[4:]
+    return host
+
+
+def _school_major_school_id_values(school: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    seen: set[str] = set()
+    for key in ("code", "school_id"):
+        value = str(school.get(key) or "").strip()
+        if value and value not in seen:
+            seen.add(value)
+            values.append(value)
+    return values
 
 
 def _major_school_list_sql(
