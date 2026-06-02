@@ -82,6 +82,46 @@ PROVINCE_ID_BY_NAME = {
     "新疆": "65",
 }
 
+SCHOOL_MAJOR_CONTEXT_EVIDENCE_TYPES = {"admission_history", "plan", "specialty_group"}
+
+SCHOOL_MAJOR_SUBJECT_FAMILY_BY_ALIAS = {
+    "物理": "physics",
+    "physical": "physics",
+    "physics": "physics",
+    "理科": "physics",
+    "science": "physics",
+    "1": "physics",
+    "2073": "physics",
+    "历史": "history",
+    "history": "history",
+    "文科": "history",
+    "arts": "history",
+    "liberal": "history",
+    "2": "history",
+    "2074": "history",
+    "综合": "comprehensive",
+    "comprehensive": "comprehensive",
+    "3": "comprehensive",
+    "艺术": "art",
+    "艺术类": "art",
+    "art": "art",
+    "4": "art",
+    "体育": "sports",
+    "体育类": "sports",
+    "sports": "sports",
+    "5": "sports",
+}
+
+SCHOOL_MAJOR_DEFAULT_SUBJECT_BY_FAMILY = {
+    "physics": "物理",
+    "history": "历史",
+    "comprehensive": "综合",
+    "art": "艺术类",
+    "sports": "体育类",
+}
+
+SCHOOL_MAJOR_CANONICAL_SUBJECT_INPUTS = {"物理", "历史", "综合", "理科", "文科", "艺术类", "体育类", "艺术", "体育"}
+
 
 SCHOOL_MAJOR_PROFILE_GAPS = [
     "校专业级工作地域分布",
@@ -905,17 +945,88 @@ class RetrievalTools:
         school = school_result["data"]["selected_school"]
         major_resolved = major_result["status"] == "ok"
         major = major_result["data"]["selected_major"] if major_resolved else _raw_admission_major(major_text)
+        subject_context = _school_major_subject_context(subject_type)
+        normalized_subject_type = subject_context.get("normalized_subject_type") or subject_type
+        normalized_slots = {
+            **school_result["normalized_slots"],
+            **(major_result["normalized_slots"] if major_resolved else {"major_name": major_text, "major_resolution": "raw_admission_name"}),
+            "province": province,
+            "subject_type": normalized_subject_type,
+            "year": year,
+        }
+        if subject_context.get("invalid"):
+            structured_warnings = [
+                {
+                    "warning_code": "INVALID_SUBJECT_TYPE",
+                    "message": f"输入科类“{subject_type}”不在本地支持范围内，请使用物理、历史、综合、理科、文科、艺术类或体育类。",
+                    "slot": "subject_type",
+                }
+            ]
+            empty_summary = _school_major_evidence_summary(None, [], [], [], bool(province or year))
+            return tool_result(
+                "school_major_profile",
+                "needs_clarification",
+                {
+                    "school_text": school_text,
+                    "major_text": major_text,
+                    "province": province,
+                    "subject_type": subject_type,
+                    "year": year,
+                },
+                normalized_slots=normalized_slots,
+                data={
+                    "school": school,
+                    "major": major,
+                    "school_major": {},
+                    "school_major_evidence": [],
+                    "catalog_evidence": [],
+                    "matched_evidence": [],
+                    "related_evidence": [],
+                    "evidence_summary": empty_summary,
+                    "evidence_gaps": _school_major_evidence_gaps(empty_summary),
+                    "subject_evals": [],
+                    "dual_class": [],
+                    "employment": {},
+                    "specialty_groups": [],
+                    "structured_warnings": structured_warnings,
+                    "available_fields": ["学校基础信息", "专业基础信息" if major_resolved else "招生专业原始名称"],
+                },
+                scope_notes=[
+                    "学校-专业开设关系、专业通用资料、学校级就业、专业组样本是不同口径。",
+                    "非法科类不会进入招生/录取证据检索，避免产生看似可用的上下文结论。",
+                ],
+                data_gaps=SCHOOL_MAJOR_PROFILE_GAPS,
+                needs_clarification=["subject_type"],
+                source_tables=_merge_source_tables(school_result["source_tables"], major_result["source_tables"]),
+                warnings=[warning["message"] for warning in structured_warnings],
+            )
+
         school_major = None
         school_major_evidence = [
             row
-            for sql in _school_major_evidence_sqls(school, major, province, subject_type, year)
+            for sql in _school_major_evidence_sqls(school, major, province, normalized_subject_type, year)
             for row in self.client.query(sql)
         ]
-        evidence_summary = _school_major_evidence_summary(school_major, school_major_evidence)
+        has_context = bool(province or normalized_subject_type or year)
+        catalog_evidence, matched_evidence, related_evidence = _classify_school_major_evidence(
+            school_major_evidence,
+            province=province,
+            subject_context=subject_context,
+            year=year,
+            has_context=has_context,
+        )
+        evidence_summary = _school_major_evidence_summary(
+            school_major,
+            school_major_evidence,
+            matched_evidence,
+            related_evidence,
+            has_context,
+        )
+        structured_warnings = _school_major_structured_warnings(evidence_summary, has_context, major_resolved, related_evidence)
         subject_evals = self.client.query(build_subject_eval_sql(school, major)) if major_resolved else []
         dual_class = self.client.query(build_dual_class_sql(school, major)) if major_resolved else []
         employment = _first_row(self.client.query(build_latest_employment_sql(school)))
-        groups = self.client.query(_specialty_group_sql(school, major, province, subject_type, year))
+        groups = self.client.query(_specialty_group_sql(school, major, province, normalized_subject_type, year))
 
         available = ["学校基础信息"]
         if major_resolved:
@@ -931,7 +1042,6 @@ class RetrievalTools:
         if groups:
             available.append("专业组样本")
 
-        has_context = bool(province or subject_type or year)
         return tool_result(
             "school_major_profile",
             _school_major_profile_status(evidence_summary, has_context, major_resolved),
@@ -942,24 +1052,22 @@ class RetrievalTools:
                 "subject_type": subject_type,
                 "year": year,
             },
-            normalized_slots={
-                **school_result["normalized_slots"],
-                **(major_result["normalized_slots"] if major_resolved else {"major_name": major_text, "major_resolution": "raw_admission_name"}),
-                "province": province,
-                "subject_type": subject_type,
-                "year": year,
-            },
+            normalized_slots=normalized_slots,
             data={
                 "school": school,
                 "major": major,
                 "school_major": school_major or {},
                 "school_major_evidence": school_major_evidence,
+                "catalog_evidence": catalog_evidence,
+                "matched_evidence": matched_evidence,
+                "related_evidence": related_evidence,
                 "evidence_summary": evidence_summary,
                 "evidence_gaps": _school_major_evidence_gaps(evidence_summary),
                 "subject_evals": subject_evals,
                 "dual_class": dual_class,
                 "employment": employment or {},
                 "specialty_groups": groups,
+                "structured_warnings": structured_warnings,
                 "available_fields": available,
             },
             scope_notes=[
@@ -982,7 +1090,7 @@ class RetrievalTools:
                 "edu_college_specialty_group",
                 "edu_specialty_group_major",
             ],
-            warnings=_school_major_profile_warnings(evidence_summary, has_context, major_resolved),
+            warnings=_school_major_profile_warnings(evidence_summary, has_context, major_resolved, structured_warnings),
         )
 
     def score_to_rank(
@@ -2555,12 +2663,96 @@ def _raw_admission_major(major_text: str) -> dict[str, Any]:
     }
 
 
+def _school_major_subject_context(subject_type: str | None) -> dict[str, Any]:
+    raw = _text(subject_type)
+    if not raw:
+        return {"raw_subject_type": "", "family": None, "normalized_subject_type": None, "invalid": False}
+
+    family = SCHOOL_MAJOR_SUBJECT_FAMILY_BY_ALIAS.get(raw) or SCHOOL_MAJOR_SUBJECT_FAMILY_BY_ALIAS.get(raw.lower())
+    if not family:
+        return {"raw_subject_type": raw, "family": None, "normalized_subject_type": raw, "invalid": True}
+
+    normalized = raw if raw in SCHOOL_MAJOR_CANONICAL_SUBJECT_INPUTS else SCHOOL_MAJOR_DEFAULT_SUBJECT_BY_FAMILY[family]
+    return {
+        "raw_subject_type": raw,
+        "family": family,
+        "normalized_subject_type": normalized,
+        "invalid": False,
+    }
+
+
+def _classify_school_major_evidence(
+    evidence_rows: list[dict[str, Any]],
+    *,
+    province: str | None,
+    subject_context: dict[str, Any],
+    year: int | None,
+    has_context: bool,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    catalog_rows = []
+    matched_rows = []
+    related_rows = []
+    for row in evidence_rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("source_type") not in SCHOOL_MAJOR_CONTEXT_EVIDENCE_TYPES:
+            if row.get("source_type") == "catalog":
+                catalog_rows.append(row)
+            continue
+        if not has_context or _school_major_context_matches(row, province, subject_context, year):
+            matched_rows.append(row)
+        else:
+            related_rows.append(row)
+    return catalog_rows, matched_rows, related_rows
+
+
+def _school_major_context_matches(
+    row: dict[str, Any],
+    province: str | None,
+    subject_context: dict[str, Any],
+    year: int | None,
+) -> bool:
+    requested_province = _text(province)
+    requested_year = _text(year)
+    if requested_province and not _school_major_province_matches(requested_province, row.get("province")):
+        return False
+    if requested_year and _text(row.get("year")) != requested_year:
+        return False
+    if subject_context.get("family") and not _school_major_subject_matches(subject_context, row.get("subject_type")):
+        return False
+    return True
+
+
+def _school_major_province_matches(requested: str, actual: Any) -> bool:
+    actual_text = _text(actual)
+    if not actual_text:
+        return False
+    requested_id = _province_id(requested) or requested
+    actual_id = _province_id(actual_text) or actual_text
+    return actual_text == requested or actual_id == requested_id
+
+
+def _school_major_subject_matches(subject_context: dict[str, Any], actual: Any) -> bool:
+    actual_text = _text(actual)
+    if not actual_text:
+        return False
+    actual_family = SCHOOL_MAJOR_SUBJECT_FAMILY_BY_ALIAS.get(actual_text) or SCHOOL_MAJOR_SUBJECT_FAMILY_BY_ALIAS.get(actual_text.lower())
+    if actual_family:
+        return actual_family == subject_context.get("family")
+    return actual_text == subject_context.get("raw_subject_type") or actual_text == subject_context.get("normalized_subject_type")
+
+
 def _school_major_evidence_summary(
     school_major: dict[str, Any] | None,
     evidence_rows: list[dict[str, Any]],
+    matched_evidence_rows: list[dict[str, Any]] | None = None,
+    related_evidence_rows: list[dict[str, Any]] | None = None,
+    has_context: bool = False,
 ) -> dict[str, Any]:
     source_tables = {str(row.get("source_table") or "") for row in evidence_rows}
-    source_types = {str(row.get("source_type") or "") for row in evidence_rows}
+    context_rows = [row for row in evidence_rows if isinstance(row, dict) and row.get("source_type") in SCHOOL_MAJOR_CONTEXT_EVIDENCE_TYPES]
+    supporting_rows = matched_evidence_rows if has_context else context_rows
+    source_types = {str(row.get("source_type") or "") for row in supporting_rows or []}
     has_department_catalog = "edu_university_department_major" in source_tables
     has_admission_history = "admission_history" in source_types
     has_plan = "plan" in source_types
@@ -2572,7 +2764,10 @@ def _school_major_evidence_summary(
         "has_admission_history": has_admission_history,
         "has_plan": has_plan,
         "has_specialty_group": has_specialty_group,
+        "has_context_match": bool(has_context and matched_evidence_rows),
         "evidence_count": len(evidence_rows),
+        "matched_evidence_count": len(matched_evidence_rows or []),
+        "related_evidence_count": len(related_evidence_rows or []),
         "source_tables": sorted(table for table in source_tables if table),
     }
 
@@ -2601,15 +2796,56 @@ def _school_major_evidence_gaps(evidence_summary: dict[str, Any]) -> list[str]:
     return gaps
 
 
+def _school_major_structured_warnings(
+    evidence_summary: dict[str, Any],
+    has_context: bool,
+    major_resolved: bool,
+    related_evidence: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    warnings = []
+    if evidence_summary.get("has_department_catalog") and has_context and not evidence_summary.get("has_admission_or_plan"):
+        warnings.append(
+            {
+                "warning_code": "CONTEXT_EVIDENCE_MISSING",
+                "message": "已命中院系专业目录证据，但未命中该省份/科类/年份招生或录取证据。",
+            }
+        )
+        if related_evidence:
+            warnings.append(
+                {
+                    "warning_code": "CONTEXT_EVIDENCE_MISMATCH",
+                    "message": "命中了学校/专业相关招生或计划证据，但与请求的省份/科类/年份不完全匹配，不能作为该上下文结论。",
+                }
+            )
+    elif not evidence_summary.get("has_department_catalog") and evidence_summary.get("has_admission_or_plan"):
+        warnings.append(
+            {
+                "warning_code": "CATALOG_EVIDENCE_MISSING",
+                "message": "未命中院系专业目录证据；仅命中招生/录取/专业组证据，回答时需标注来源口径。",
+            }
+        )
+    elif not evidence_summary.get("has_department_catalog"):
+        warnings.append(
+            {
+                "warning_code": "CATALOG_AND_CONTEXT_EVIDENCE_MISSING" if major_resolved else "CATALOG_EVIDENCE_MISSING",
+                "message": "本地库未命中院系专业目录证据，不能直接认定已开设。",
+            }
+        )
+    return warnings
+
+
 def _school_major_profile_warnings(
     evidence_summary: dict[str, Any],
     has_context: bool,
     major_resolved: bool,
+    structured_warnings: list[dict[str, str]] | None = None,
 ) -> list[str]:
     warnings = []
     if not major_resolved:
         warnings.append("未映射到标准专业库，已按招生计划/录取历史原始专业名称检索。")
-    if evidence_summary.get("has_department_catalog") and has_context and not evidence_summary.get("has_admission_or_plan"):
+    if structured_warnings is not None:
+        warnings.extend(warning["message"] for warning in structured_warnings)
+    elif evidence_summary.get("has_department_catalog") and has_context and not evidence_summary.get("has_admission_or_plan"):
         warnings.append("已命中院系专业目录证据，但未命中该省份/科类/年份招生或录取证据。")
     elif not evidence_summary.get("has_department_catalog") and evidence_summary.get("has_admission_or_plan"):
         warnings.append("未命中院系专业目录证据；仅命中招生/录取/专业组证据，回答时需标注来源口径。")
@@ -2884,8 +3120,6 @@ def _school_major_evidence_sqls(
         admission_clauses.append(f"CAST(a.school_id AS CHAR) = {sql_quote(school_code)}")
     if province:
         admission_clauses.append(f"a.province_name = {sql_quote(province)}")
-    if subject_type:
-        admission_clauses.append(f"a.subject_type = {sql_quote(subject_type)}")
     if year:
         admission_clauses.append(f"a.year = {int(year)}")
 
@@ -2919,8 +3153,6 @@ def _school_major_evidence_sqls(
     ]
     if province_id:
         specialty_group_clauses.append(f"g.province = {sql_quote(province_id)}")
-    if subject_type:
-        specialty_group_clauses.append(f"g.group_type = {sql_quote(subject_type)}")
     if year:
         specialty_group_clauses.append(f"g.year = {int(year)}")
 

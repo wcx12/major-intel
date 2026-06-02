@@ -1,0 +1,211 @@
+{
+  "metadata": {
+    "version": 1,
+    "purpose": "Human-curated strong oracle for school_major_profile tool boundaries. These expectations are independent from the current tool implementation and may intentionally fail when the tool overstates evidence.",
+    "oracle_scope": "tool-only; final answer judging is intentionally out of scope for this file"
+  },
+  "cases": [
+    {
+      "id": "oracle_hdu_cs_no_context",
+      "question": "杭电计算机怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "计算机科学与技术"
+      },
+      "strong_oracle": {
+        "oracle_source": "human_curated_from_local_schema_and_independent_sql_probe",
+        "expected_status": "ok",
+        "canonical": {
+          "school_name": "杭州电子科技大学",
+          "major_name": "计算机科学与技术"
+        },
+        "evidence": {
+          "required_source_types": ["catalog", "admission_history", "plan", "specialty_group"]
+        },
+        "context": {
+          "expected_match": "not_applicable"
+        }
+      }
+    },
+    {
+      "id": "oracle_hdu_cs_zj_physics_2025",
+      "question": "浙江物理2025年，杭电计算机怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "计算机科学与技术",
+        "province": "浙江",
+        "subject_type": "物理",
+        "year": 2025
+      },
+      "strong_oracle": {
+        "oracle_source": "human_curated_from_local_schema_and_independent_sql_probe",
+        "expected_status": "partial",
+        "canonical": {
+          "school_name": "杭州电子科技大学",
+          "major_name": "计算机科学与技术"
+        },
+        "evidence": {
+          "required_source_types": ["catalog", "admission_history"]
+        },
+        "context": {
+          "province": "浙江",
+          "subject_type": "物理",
+          "year": 2025,
+          "expected_match": "no_strict_context_match",
+          "required_warning_contains": ["未命中该省份/科类/年份招生或录取证据"]
+        }
+      }
+    },
+    {
+      "id": "oracle_hdu_cs_zj_comprehensive_2025",
+      "question": "浙江综合2025年，杭电计算机怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "计算机科学与技术",
+        "province": "浙江",
+        "subject_type": "综合",
+        "year": 2025
+      },
+      "strong_oracle": {
+        "oracle_source": "human_curated_from_local_schema_and_independent_sql_probe",
+        "expected_status": "ok",
+        "canonical": {
+          "school_name": "杭州电子科技大学",
+          "major_name": "计算机科学与技术"
+        },
+        "evidence": {
+          "required_source_types": ["catalog", "admission_history"]
+        },
+        "context": {
+          "province": "浙江",
+          "subject_type": "综合",
+          "year": 2025,
+          "expected_match": "strict_match"
+        }
+      }
+    },
+    {
+      "id": "oracle_hdu_cs_gd_physics_2025",
+      "question": "广东物理2025年，杭电计算机怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "计算机科学与技术",
+        "province": "广东",
+        "subject_type": "物理",
+        "year": 2025
+      },
+      "strong_oracle": {
+        "oracle_source": "human_curated_from_local_schema_and_independent_sql_probe",
+        "expected_status": "ok",
+        "canonical": {
+          "school_name": "杭州电子科技大学",
+          "major_name": "计算机科学与技术"
+        },
+        "evidence": {
+          "required_source_types": ["catalog", "plan"]
+        },
+        "context": {
+          "province": "广东",
+          "subject_type": "物理",
+          "year": 2025,
+          "expected_match": "strict_match"
+        }
+      }
+    },
+    {
+      "id": "oracle_hdu_cs_gd_invalid_subject_2025",
+      "question": "广东火星科2025年，杭电计算机怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "计算机科学与技术",
+        "province": "广东",
+        "subject_type": "火星科",
+        "year": 2025
+      },
+      "strong_oracle": {
+        "oracle_source": "human_curated_adversarial_case",
+        "expected_status": "needs_clarification",
+        "canonical": {
+          "school_name": "杭州电子科技大学",
+          "major_name": "计算机科学与技术"
+        },
+        "evidence": {
+          "forbidden_source_types": ["catalog", "admission_history", "plan", "specialty_group"]
+        },
+        "context": {
+          "province": "广东",
+          "subject_type": "火星科",
+          "year": 2025,
+          "expected_match": "no_strict_context_match",
+          "required_warning_contains": ["科类"]
+        }
+      }
+    },
+    {
+      "id": "oracle_hdu_nursing_unconfirmed",
+      "question": "杭电护理学怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "护理学"
+      },
+      "strong_oracle": {
+        "oracle_source": "human_curated_negative_combo",
+        "expected_status": "partial",
+        "canonical": {
+          "school_name": "杭州电子科技大学",
+          "major_name": "护理学"
+        },
+        "evidence": {
+          "forbidden_source_types": ["catalog", "admission_history", "plan", "specialty_group"]
+        },
+        "context": {
+          "expected_match": "no_strict_context_match",
+          "required_warning_contains": ["不能直接认定已开设"]
+        }
+      }
+    },
+    {
+      "id": "oracle_hdu_unknown_major",
+      "question": "杭电星际航道规划与管理怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "星际航道规划与管理"
+      },
+      "strong_oracle": {
+        "oracle_source": "human_curated_negative_major",
+        "expected_status": "not_found",
+        "canonical": {
+          "school_name": "杭州电子科技大学",
+          "major_name": "星际航道规划与管理"
+        },
+        "evidence": {
+          "forbidden_source_types": ["catalog", "admission_history", "plan", "specialty_group"]
+        },
+        "context": {
+          "expected_match": "no_strict_context_match",
+          "required_warning_contains": ["未映射到标准专业库"]
+        }
+      }
+    },
+    {
+      "id": "oracle_unknown_school",
+      "question": "不存在大学测试样本999计算机怎么样？",
+      "tool_args": {
+        "school_text": "不存在大学测试样本999",
+        "major_text": "计算机科学与技术"
+      },
+      "strong_oracle": {
+        "oracle_source": "human_curated_negative_school",
+        "expected_status": "not_found",
+        "canonical": {},
+        "evidence": {
+          "forbidden_source_types": ["catalog", "admission_history", "plan", "specialty_group"]
+        },
+        "context": {
+          "expected_match": "no_strict_context_match",
+          "required_warning_contains": ["不能猜测学校"]
+        }
+      }
+    }
+  ]
+}

@@ -718,7 +718,7 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(result["status"], "partial")
         group_query = tools.client.queries[-1]
         self.assertIn("g.province = '44'", group_query)
-        self.assertIn("g.group_type = 'physical'", group_query)
+        self.assertIn("g.group_type = '物理'", group_query)
         self.assertIn("g.year = 2025", group_query)
 
     def test_school_major_profile_uses_department_major_evidence(self):
@@ -892,6 +892,167 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(result["status"], "partial")
         self.assertIn("招生/录取证据", result["data"]["evidence_gaps"])
         self.assertIn("未命中该省份/科类/年份招生或录取证据", result["warnings"][0])
+
+    def test_school_major_profile_treats_plan_subject_code_as_strict_context_match(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_major", [MAJOR]),
+                    (
+                        "/* school_major_evidence_chain_for_school_major_profile */",
+                        [
+                            {
+                                "source_type": "catalog",
+                                "source_table": "edu_university_department_major",
+                                "source_label": "院系专业目录证据",
+                                "school_id": "10124",
+                                "school_name": "杭州电子科技大学",
+                                "major_code": "080901",
+                                "major_name": "计算机科学与技术",
+                                "year": None,
+                                "province": None,
+                                "subject_type": None,
+                                "confidence": "medium",
+                                "detail": "计算机学院",
+                            }
+                        ],
+                    ),
+                    (
+                        "FROM edu_university_plan_config pc",
+                        [
+                            {
+                                "source_type": "plan",
+                                "source_table": "edu_university_plan_special",
+                                "source_label": "招生计划证据",
+                                "school_id": "10124",
+                                "school_name": "杭州电子科技大学",
+                                "major_code": "080901",
+                                "major_name": "计算机科学与技术",
+                                "year": "2025",
+                                "province": "44",
+                                "subject_type": "2073",
+                                "confidence": "medium",
+                                "detail": "206",
+                                "plan_count": "4",
+                                "score": None,
+                                "rank_value": None,
+                            }
+                        ],
+                    ),
+                    ("FROM edu_university_subject_eval", []),
+                    ("FROM edu_dual_class", []),
+                    ("FROM edu_university_employment", []),
+                    ("FROM edu_college_specialty_group g", []),
+                ]
+            )
+        )
+
+        result = tools.school_major_profile(
+            "杭州电子科技大学",
+            "计算机科学与技术",
+            province="广东",
+            subject_type="物理",
+            year=2025,
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["data"]["evidence_summary"]["has_context_match"])
+        self.assertTrue(result["data"]["evidence_summary"]["has_plan"])
+        self.assertTrue(result["data"]["evidence_summary"]["has_admission_or_plan"])
+        self.assertEqual(result["data"]["matched_evidence"][0]["subject_type"], "2073")
+        self.assertEqual(result["data"]["related_evidence"], [])
+        self.assertEqual(result["data"]["structured_warnings"], [])
+        self.assertEqual(result["normalized_slots"]["subject_type"], "物理")
+
+    def test_school_major_profile_keeps_related_plan_out_of_context_support(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_major", [MAJOR]),
+                    (
+                        "/* school_major_evidence_chain_for_school_major_profile */",
+                        [
+                            {
+                                "source_type": "catalog",
+                                "source_table": "edu_university_department_major",
+                                "source_label": "院系专业目录证据",
+                                "school_id": "10124",
+                                "school_name": "杭州电子科技大学",
+                                "major_code": "080901",
+                                "major_name": "计算机科学与技术",
+                                "year": None,
+                                "province": None,
+                                "subject_type": None,
+                                "confidence": "medium",
+                                "detail": "计算机学院",
+                            }
+                        ],
+                    ),
+                    (
+                        "FROM edu_university_plan_config pc",
+                        [
+                            {
+                                "source_type": "plan",
+                                "source_table": "edu_university_plan_special",
+                                "source_label": "招生计划证据",
+                                "school_id": "10124",
+                                "school_name": "杭州电子科技大学",
+                                "major_code": "080901",
+                                "major_name": "计算机科学与技术",
+                                "year": "2025",
+                                "province": "44",
+                                "subject_type": "2074",
+                                "confidence": "medium",
+                                "detail": "206",
+                                "plan_count": "1",
+                                "score": None,
+                                "rank_value": None,
+                            }
+                        ],
+                    ),
+                    ("FROM edu_university_subject_eval", []),
+                    ("FROM edu_dual_class", []),
+                    ("FROM edu_university_employment", []),
+                    ("FROM edu_college_specialty_group g", []),
+                ]
+            )
+        )
+
+        result = tools.school_major_profile(
+            "杭州电子科技大学",
+            "计算机科学与技术",
+            province="广东",
+            subject_type="物理",
+            year=2025,
+        )
+
+        self.assertEqual(result["status"], "partial")
+        self.assertFalse(result["data"]["evidence_summary"]["has_context_match"])
+        self.assertFalse(result["data"]["evidence_summary"]["has_plan"])
+        self.assertFalse(result["data"]["evidence_summary"]["has_admission_or_plan"])
+        self.assertEqual(result["data"]["matched_evidence"], [])
+        self.assertEqual(result["data"]["related_evidence"][0]["subject_type"], "2074")
+        self.assertIn("未命中该省份/科类/年份招生或录取证据", result["warnings"][0])
+        self.assertEqual(result["data"]["structured_warnings"][0]["warning_code"], "CONTEXT_EVIDENCE_MISSING")
+
+    def test_school_major_profile_rejects_invalid_subject_type_before_evidence_queries(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_university", [SCHOOL]), ("FROM edu_major", [MAJOR])]))
+
+        result = tools.school_major_profile(
+            "杭州电子科技大学",
+            "计算机科学与技术",
+            province="广东",
+            subject_type="火星科",
+            year=2025,
+        )
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["subject_type"])
+        self.assertIn("科类", result["warnings"][0])
+        self.assertEqual(result["data"]["structured_warnings"][0]["warning_code"], "INVALID_SUBJECT_TYPE")
+        self.assertTrue(all("school_major_evidence_chain_for_school_major_profile" not in query for query in tools.client.queries))
 
     def test_score_to_rank_requires_province_subject_type_and_score(self):
         tools = RetrievalTools(FakeClient([]))

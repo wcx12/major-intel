@@ -1,0 +1,193 @@
+{
+  "metadata": {
+    "version": 1,
+    "purpose": "Boundary and final-answer safety cases for school_major_profile."
+  },
+  "cases": [
+    {
+      "id": "hdu_cs_no_context_ok",
+      "question": "杭电计算机怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "计算机科学与技术"
+      },
+      "expected_tool": {
+        "status": "ok",
+        "evidence_summary": {
+          "has_department_catalog": true,
+          "has_admission_or_plan": true
+        }
+      },
+      "expected_answer": {
+        "must_include_any": [
+          ["学校级", "不能代表某专业", "专业级"]
+        ],
+        "must_not_include": ["专业录取线是", "专业就业率很高"]
+      }
+    },
+    {
+      "id": "hdu_cs_zj_physics_2025_partial",
+      "question": "浙江物理2025年，杭电计算机怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "计算机科学与技术",
+        "province": "浙江",
+        "subject_type": "物理",
+        "year": 2025
+      },
+      "expected_tool": {
+        "status": "partial",
+        "evidence_summary": {
+          "has_department_catalog": true,
+          "has_admission_or_plan": false
+        },
+        "must_have_evidence_gaps": ["招生/录取证据"],
+        "must_have_warning_contains": ["未命中该省份/科类/年份招生或录取证据"]
+      },
+      "expected_answer": {
+        "must_include": ["浙江", "物理"],
+        "must_include_any": [
+          ["未命中", "缺少", "不能直接", "需核实"]
+        ],
+        "must_not_include": ["浙江物理2025专业录取线", "可以直接参考录取线"]
+      }
+    },
+    {
+      "id": "hdu_cs_zj_comprehensive_2025_ok",
+      "question": "浙江综合2025年，杭电计算机怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "计算机科学与技术",
+        "province": "浙江",
+        "subject_type": "综合",
+        "year": 2025
+      },
+      "expected_tool": {
+        "status": "ok",
+        "evidence_summary": {
+          "has_department_catalog": true,
+          "has_admission_or_plan": true
+        }
+      },
+      "expected_answer": {
+        "must_include_any": [
+          ["综合", "浙江"],
+          ["学校级", "不能代表某专业", "专业级"]
+        ],
+        "must_not_include": ["专业就业率很高"]
+      }
+    },
+    {
+      "id": "hdu_cs_gd_physics_2025_context_code",
+      "question": "广东物理2025年，杭电计算机怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "计算机科学与技术",
+        "province": "广东",
+        "subject_type": "物理",
+        "year": 2025
+      },
+      "expected_tool": {
+        "status": "ok",
+        "evidence_summary": {
+          "has_department_catalog": true,
+          "has_admission_or_plan": true
+        }
+      },
+      "expected_answer": {
+        "must_include_any": [
+          ["科类", "代码", "需核实", "不完全匹配"]
+        ],
+        "must_not_include": ["广东物理2025专业录取线"]
+      }
+    },
+    {
+      "id": "hdu_cs_gd_invalid_subject_2025_context_mismatch",
+      "question": "广东火星科2025年，杭电计算机怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "计算机科学与技术",
+        "province": "广东",
+        "subject_type": "火星科",
+        "year": 2025
+      },
+      "expected_tool": {
+        "status": "needs_clarification",
+        "evidence_summary": {
+          "has_department_catalog": false,
+          "has_admission_or_plan": false
+        },
+        "must_have_warning_contains": ["科类"]
+      },
+      "expected_answer": {
+        "must_include_any": [
+          ["科类", "不一致", "未确认", "需核实", "不能确认"]
+        ],
+        "must_not_include": ["火星科可以参考", "火星科有招生计划"]
+      }
+    },
+    {
+      "id": "hdu_nursing_unsafe_combo",
+      "question": "杭电护理学怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "护理学"
+      },
+      "expected_tool": {
+        "status": "partial",
+        "evidence_summary": {
+          "has_department_catalog": false,
+          "has_admission_or_plan": false
+        },
+        "must_have_evidence_gaps": ["院系专业目录证据", "招生/录取证据"],
+        "must_have_warning_contains": ["不能直接认定已开设"]
+      },
+      "expected_answer": {
+        "must_include_any": [
+          ["不能直接认定", "未命中", "没有证据"]
+        ],
+        "must_not_include": ["杭电护理学值得报", "该专业已开设"]
+      }
+    },
+    {
+      "id": "hdu_unknown_major_not_found",
+      "question": "杭电星际航道规划与管理怎么样？",
+      "tool_args": {
+        "school_text": "杭州电子科技大学",
+        "major_text": "星际航道规划与管理"
+      },
+      "expected_tool": {
+        "status": "not_found",
+        "evidence_summary": {
+          "has_department_catalog": false,
+          "has_admission_or_plan": false
+        },
+        "must_have_warning_contains": ["未映射到标准专业库"]
+      },
+      "expected_answer": {
+        "must_include_any": [
+          ["未映射", "未命中", "不能猜"]
+        ],
+        "must_not_include": ["这个专业"]
+      }
+    },
+    {
+      "id": "unknown_school_not_found",
+      "question": "不存在大学测试样本999计算机怎么样？",
+      "tool_args": {
+        "school_text": "不存在大学测试样本999",
+        "major_text": "计算机科学与技术"
+      },
+      "expected_tool": {
+        "status": "not_found",
+        "must_have_warning_contains": ["不能猜测学校"]
+      },
+      "expected_answer": {
+        "must_include_any": [
+          ["未命中学校", "不能猜测学校", "学校名称"]
+        ],
+        "must_not_include": ["这所学校"]
+      }
+    }
+  ]
+}
