@@ -576,6 +576,56 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertIn("u.level_name AS school_level_name", tools.client.queries[-1])
         self.assertIn("sm.level_name AS major_level_name", tools.client.queries[-1])
 
+    def test_major_school_list_join_accepts_school_code_and_school_id(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_major", [MAJOR])]))
+
+        tools.major_school_list("计算机科学与技术", province_filter="浙江")
+
+        sql = tools.client.queries[-1]
+        self.assertIn("u.code = CAST(sm.school_id AS CHAR)", sql)
+        self.assertIn("CAST(u.school_id AS CHAR) = CAST(sm.school_id AS CHAR)", sql)
+        self.assertIn("u.name = sm.school_name", sql)
+
+    def test_major_school_list_normalizes_province_suffix(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_major", [MAJOR])]))
+
+        result = tools.major_school_list("计算机科学与技术", province_filter="浙江省")
+
+        sql = tools.client.queries[-1]
+        self.assertIn("u.province_name = '浙江'", sql)
+        self.assertEqual(result["input"]["province_filter"], "浙江省")
+        self.assertEqual(result["normalized_slots"]["province_filter"], "浙江")
+
+    def test_major_school_list_propagates_major_lookup_warnings(self):
+        undergraduate_major = dict(MAJOR)
+        undergraduate_major.update({"code": "120801", "special_name": "电子商务", "type_name": "本科(普通)", "degree": "管理学学士"})
+        vocational_major = dict(MAJOR)
+        vocational_major.update({"code": "530701", "special_name": "电子商务", "type_name": "专科(普通)", "degree": ""})
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_major", [undergraduate_major, vocational_major]),
+                    ("FROM edu_school_major sm", [{"school_name": "杭州职业技术大学"}]),
+                ]
+            )
+        )
+
+        result = tools.major_school_list("电子商务", province_filter="浙江")
+
+        self.assertIn("同名专业存在多个层次", result["warnings"][0])
+
+    def test_major_school_list_rejects_non_positive_limit(self):
+        tools = RetrievalTools(FakeClient([]))
+
+        zero = tools.major_school_list("计算机科学与技术", limit=0)
+        negative = tools.major_school_list("计算机科学与技术", limit=-1)
+
+        self.assertEqual(zero["status"], "needs_clarification")
+        self.assertEqual(zero["needs_clarification"], ["limit"])
+        self.assertEqual(negative["status"], "needs_clarification")
+        self.assertEqual(negative["needs_clarification"], ["limit"])
+        self.assertEqual(tools.client.queries, [])
+
     def test_school_major_profile_filters_specialty_groups_by_context(self):
         tools = RetrievalTools(
             FakeClient(

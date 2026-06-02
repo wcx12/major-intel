@@ -321,6 +321,13 @@ def _coerce_positive_limit(limit: Any, default: int = 5) -> int:
         return default
 
 
+def _is_positive_int(value: Any) -> bool:
+    try:
+        return int(value) >= 1
+    except (TypeError, ValueError):
+        return False
+
+
 _SCHOOL_EMPLOYMENT_SUMMARY_KEYS = [
     "employment_data",
     "employment_rate",
@@ -817,13 +824,34 @@ class RetrievalTools:
     ) -> dict[str, Any]:
         """Return schools recorded as offering a major."""
 
+        if not _is_positive_int(limit):
+            return tool_result(
+                "major_school_list",
+                "needs_clarification",
+                {
+                    "major_text": major_text,
+                    "province_filter": province_filter,
+                    "school_level_filter": school_level_filter,
+                    "limit": limit,
+                },
+                needs_clarification=["limit"],
+                warnings=["limit 必须是正整数，不能进入 SQL 层。"],
+            )
+
         major_result = self.major_lookup(major_text, limit=1)
         if major_result["status"] != "ok":
             return major_result | {"tool_name": "major_school_list"}
 
         major = major_result["data"]["selected_major"]
-        rows = self.client.query(_major_school_list_sql(major, province_filter, school_level_filter, limit))
+        normalized_province_filter = _normalize_province_filter(province_filter)
+        rows = self.client.query(_major_school_list_sql(major, normalized_province_filter, school_level_filter, limit))
         status = "ok" if rows else "not_found"
+        normalized_slots = dict(major_result["normalized_slots"])
+        if province_filter:
+            normalized_slots["province_filter"] = normalized_province_filter
+        warnings = list(major_result.get("warnings") or [])
+        if not rows:
+            warnings.append("本地库未命中开设该专业的学校记录。")
         return tool_result(
             "major_school_list",
             status,
@@ -833,7 +861,7 @@ class RetrievalTools:
                 "school_level_filter": school_level_filter,
                 "limit": limit,
             },
-            normalized_slots=major_result["normalized_slots"],
+            normalized_slots=normalized_slots,
             data={"major": major, "schools": rows},
             scope_notes=["开设学校列表是学校专业关系口径，不等于某省当年有招生计划。"],
             data_gaps=[] if rows else ["开设该专业的学校记录"],
@@ -841,7 +869,7 @@ class RetrievalTools:
                 major_result["source_tables"],
                 ["edu_school_major", "edu_university"],
             ),
-            warnings=[] if rows else ["本地库未命中开设该专业的学校记录。"],
+            warnings=_distinct_texts(warnings),
         )
 
     def school_major_profile(
@@ -2811,12 +2839,17 @@ def _major_school_list_sql(
     province_clause = f"AND u.province_name = {sql_quote(province_filter)}" if province_filter else ""
     level_clause = f"AND {_school_level_filter_clause(school_level_filter)}" if school_level_filter else ""
     return f"""
-SELECT sm.school_id, sm.school_name, u.province_name, u.city_name, u.is211, u.is985,
+SELECT DISTINCT sm.school_id, sm.school_name, u.province_name, u.city_name, u.is211, u.is985,
        u.is_dual_class, sm.major_code, sm.major_name, sm.nation_first_class,
        sm.xueke_rank_score, sm.ruanke_level, u.level_name AS school_level_name,
        u.type_name AS school_type_name, sm.level_name AS major_level_name
 FROM edu_school_major sm
-LEFT JOIN edu_university u ON u.code = CAST(sm.school_id AS CHAR) AND u.name = sm.school_name
+LEFT JOIN edu_university u
+  ON (
+      u.code = CAST(sm.school_id AS CHAR)
+      OR CAST(u.school_id AS CHAR) = CAST(sm.school_id AS CHAR)
+  )
+  AND u.name = sm.school_name
 WHERE (sm.deleted IS NULL OR sm.deleted = 0)
   AND (sm.major_code = {sql_quote(major.get('code'))} OR sm.major_name = {sql_quote(major.get('special_name'))})
   {province_clause}
@@ -3259,6 +3292,29 @@ def _school_level_filter_clause(school_level_filter: str) -> str:
     if "211" in school_level_filter:
         return f"({text_clause} OR u.is211 = 1)"
     return text_clause
+
+
+def _normalize_province_filter(province_filter: str | None) -> str | None:
+    text = str(province_filter or "").strip()
+    if not text:
+        return None
+    direct = {
+        "北京市": "北京",
+        "上海市": "上海",
+        "天津市": "天津",
+        "重庆市": "重庆",
+        "广西壮族自治区": "广西",
+        "宁夏回族自治区": "宁夏",
+        "新疆维吾尔自治区": "新疆",
+        "内蒙古自治区": "内蒙古",
+        "西藏自治区": "西藏",
+    }
+    if text in direct:
+        return direct[text]
+    for suffix in ("省", "市"):
+        if text.endswith(suffix) and len(text) > len(suffix):
+            return text[: -len(suffix)]
+    return text
 
 
 def _rank_to_school_match_sql(

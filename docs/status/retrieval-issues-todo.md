@@ -82,6 +82,14 @@
 - `python -m pytest tests/test_retrieval_tools.py`：39 passed。
 - `python -m pytest tests`：137 passed。
 
+补充验收记录（2026-06-02，`major_school_list` 专项）：
+
+- 建立 `tests/function_calls/major_school_list/boundary_cases.json`、`test_boundary_cases_manifest.py`、`test_boundary_audit.py`。
+- 建立 `scripts/evaluate_major_school_list_boundaries.py` 和独立 oracle `scripts/major_school_list_oracles.py`，真实库对照工具输出和 `code OR school_id` 双键召回结果。
+- 修复 `major_school_list` 的学校关联键漏召回、省份后缀归一化、`major_lookup` warning 传播、`limit<=0` 参数校验。
+- `python scripts/evaluate_major_school_list_boundaries.py --jsonl-report reports/major_school_list_boundary_eval_20260602.jsonl --markdown-report reports/major_school_list_boundary_eval_20260602.md`：16/16 通过。
+- `python -m pytest tests\function_calls\major_school_list tests\test_retrieval_tools.py -q`：78 passed。
+
 ### 2. 修正 `data_gap_detection` 未知问题类型处理
 
 状态：已完成（2026-05-21）

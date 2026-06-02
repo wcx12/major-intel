@@ -479,6 +479,8 @@ edu_major
 
 用途：给专业查开设学校列表。
 
+边界口径：返回的是本地库记录的“开设学校”关系，不等于某省某年招生计划；省份筛选按学校所在地，学校层次筛选支持 `本科`、`专科`、`985`、`211`、`双一流` 等粗筛。
+
 输入：
 
 ```json
@@ -502,11 +504,13 @@ edu_major
 使用表：
 
 ```text
+edu_major
+entity_aliases
 edu_school_major
-edu_university_department_major
 edu_university
-edu_university_subject_eval
 ```
+
+实现备注：`edu_school_major.school_id` 在本地库中可能存 `edu_university.code`，也可能存内部 `edu_university.school_id`；当前实现和边界审计均按 `code OR school_id` 双键 + 学校名匹配召回，避免漏学校和同号串校。
 
 ### 7. `school_major_profile`
 

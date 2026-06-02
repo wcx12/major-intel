@@ -1,0 +1,139 @@
+{
+  "description": "major_school_list 真实库边界审计用例。脚本会调用工具结果，并用独立 oracle SQL 对照学校召回数量、状态、warning 和参数边界。",
+  "cases": [
+    {
+      "case_id": "cs_zhejiang_undergrad_dual_key",
+      "major": "计算机科学与技术",
+      "province_filter": "浙江",
+      "school_level_filter": "本科",
+      "limit": 30,
+      "note": "P0 召回基线；浙江本科计算机科学与技术应暴露 edu_school_major.school_id 混用 code/school_id 导致的漏召回"
+    },
+    {
+      "case_id": "cs_nationwide_undergrad_dual_key",
+      "major": "计算机科学与技术",
+      "school_level_filter": "本科",
+      "limit": 250,
+      "note": "全国本科大样本；limit 足够大，用于观察 code-only join 与双键 oracle 的总体召回差距"
+    },
+    {
+      "case_id": "cs_zhejiang_province_suffix",
+      "major": "计算机科学与技术",
+      "province_filter": "浙江省",
+      "school_level_filter": "本科",
+      "limit": 30,
+      "note": "省份输入归一化；用户常说浙江省，oracle 归一到浙江后应能命中"
+    },
+    {
+      "case_id": "alias_jike_zhejiang_undergrad",
+      "major": "计科",
+      "province_filter": "浙江",
+      "school_level_filter": "本科",
+      "limit": 30,
+      "note": "专业别名 contract；应先通过 entity_aliases 归一为计算机科学与技术，再查开设学校"
+    },
+    {
+      "case_id": "software_jiangsu_undergrad",
+      "major": "软件工程",
+      "province_filter": "江苏",
+      "school_level_filter": "本科",
+      "limit": 50,
+      "note": "热门工科专业 + 省份/本科筛选组合"
+    },
+    {
+      "case_id": "ai_shanghai_undergrad",
+      "major": "人工智能",
+      "province_filter": "上海",
+      "school_level_filter": "本科",
+      "limit": 50,
+      "note": "新兴专业 + 直辖市筛选组合"
+    },
+    {
+      "case_id": "law_beijing_undergrad",
+      "major": "法学",
+      "province_filter": "北京",
+      "school_level_filter": "本科",
+      "limit": 50,
+      "note": "文科热门专业 + 北京本科筛选组合"
+    },
+    {
+      "case_id": "clinical_zhejiang_undergrad",
+      "major": "临床医学",
+      "province_filter": "浙江",
+      "school_level_filter": "本科",
+      "limit": 50,
+      "note": "医学专业 + 浙江本科筛选组合，观察专业开设表覆盖"
+    },
+    {
+      "case_id": "cs_zhejiang_985_empty",
+      "major": "计算机科学与技术",
+      "province_filter": "浙江",
+      "school_level_filter": "985",
+      "limit": 20,
+      "note": "学校层级 flag 筛选；当前浙江该专业 985 口径可能为空，应与 oracle 一致"
+    },
+    {
+      "case_id": "cs_zhejiang_dual_empty",
+      "major": "计算机科学与技术",
+      "province_filter": "浙江",
+      "school_level_filter": "双一流",
+      "limit": 20,
+      "note": "双一流 flag 筛选；验证 level_name 与结构化 flag 的组合语义"
+    },
+    {
+      "case_id": "broad_computer_needs_clarification",
+      "major": "计算机",
+      "province_filter": "浙江",
+      "school_level_filter": "本科",
+      "limit": 30,
+      "expected_status": "needs_clarification",
+      "note": "模糊专业词应澄清，不能默认成计算机科学与技术"
+    },
+    {
+      "case_id": "major_not_found",
+      "major": "不存在专业ABC",
+      "province_filter": "浙江",
+      "school_level_filter": "本科",
+      "limit": 30,
+      "expected_status": "not_found",
+      "note": "不存在专业应安全 miss，并传播 major_lookup 的 not_found"
+    },
+    {
+      "case_id": "invalid_province",
+      "major": "计算机科学与技术",
+      "province_filter": "火星",
+      "school_level_filter": "本科",
+      "limit": 30,
+      "note": "无效省份应返回结构化 not_found 或与 oracle 一致的空结果"
+    },
+    {
+      "case_id": "ecommerce_cross_level_warning",
+      "major": "电子商务",
+      "province_filter": "浙江",
+      "school_level_filter": "本科",
+      "limit": 20,
+      "expected_warning_substrings": [
+        "同名专业存在多个层次"
+      ],
+      "note": "同名跨层次专业；major_lookup 的 warning 必须传播到 major_school_list 最终结果"
+    },
+    {
+      "case_id": "limit_zero",
+      "major": "计算机科学与技术",
+      "province_filter": "浙江",
+      "school_level_filter": "本科",
+      "limit": 0,
+      "expected_status": "needs_clarification",
+      "note": "无效 limit；应要求正整数，不能包装成 not_found"
+    },
+    {
+      "case_id": "limit_negative",
+      "major": "计算机科学与技术",
+      "province_filter": "浙江",
+      "school_level_filter": "本科",
+      "limit": -1,
+      "expected_status": "needs_clarification",
+      "note": "负数 limit；应要求正整数，不能进入 SQL 层或抛出 MySQL 语法错误"
+    }
+  ]
+}

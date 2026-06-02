@@ -114,7 +114,7 @@ $env:GAOKAO_DB_PASSWORD = "<你的本地密码>"
 | `school_profile` | 学校概况 | 学校基础、双一流、学科评估、学校级就业摘要 |
 | `major_profile` | 专业概况 | 专业通用信息；保留解析 warning、画像缺口和后缀上下文，不代表某校某专业 |
 | `school_major_list` | 某学校开设专业列表 | 不等于某省当年招生计划 |
-| `major_school_list` | 开设某专业的学校列表 | 可做省份/层次粗筛 |
+| `major_school_list` | 开设某专业的学校列表 | 可做省份/层次粗筛；已覆盖 code/school_id 双键召回、省份后缀归一化和 limit 校验 |
 | `school_major_profile` | 某校某专业综合画像 | 合并学校、专业、学科评估、缺口提示 |
 | `score_to_rank` | 分数转位次 | 按省份、科类、年份换算 |
 | `rank_to_school_match` | 按分数/位次推荐学校 | 输出冲/稳/保学校桶，历史参考 |

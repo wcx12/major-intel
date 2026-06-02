@@ -1,6 +1,6 @@
 # Major Intel 当前状态快照
 
-更新时间：2026-05-21
+更新时间：2026-06-02
 
 ## 已完成的主干能力
 
@@ -68,6 +68,7 @@ data_gap_detection
 - 本轮新增 9 个正式工具：专业组查询、选科要求、院系专业、招生计划、学校级就业摘要、来源追踪、转专业政策、学费线索/校区缺口、专业组风险初筛。
 - 招生计划/学费等混合来源表已经改成“专业代码精确 + 专业名精确 + 专业名包含”的匹配，能命中带校区、中外合作、学费说明等后缀的专业名。
 - 27 个正式工具的真实库 smoke 矩阵已补齐：`data/retrieval_smoke_cases.json` 当前展开后为 305 个用例，覆盖 `retrieval_function_registry.py` 注册表里的全部工具。
+- `major_school_list` 已完成专项边界修复与真实库审计：按 `edu_university.code OR edu_university.school_id` 双键召回学校，支持常见省份后缀归一化，传播专业解析 warning，并对 `limit<=0` 返回结构化 `needs_clarification`。
 
 ### 1.1 工具完成状态
 
@@ -124,6 +125,7 @@ policy_rule_lookup
 - 真实库抽样：`python scripts/run_retrieval_smoke_cases.py --sample-per-tool 1 --report reports/retrieval_smoke_sample_27_tools.json` 跑通 27/27，结构失败 0 个。
 - 真实库全量：`python scripts/run_retrieval_smoke_cases.py --report reports/retrieval_smoke_27_tools_full.json --timeout 60` 跑通 305/305，结构失败 0 个，质量提示 0 个。
 - 质量提示已完成第一轮清零：`school_major_profile` 的 `partial` 口径已在 smoke 中校准；`score_to_rank` 支持文理科与物理/历史的保守别名回退；考公岗位检索支持 K/T/TK 专业代码后缀；`rank_to_school_match` 的“双一流”筛选已使用结构化字段。
+- `major_school_list` 专项：`python scripts/evaluate_major_school_list_boundaries.py --jsonl-report reports/major_school_list_boundary_eval_20260602.jsonl --markdown-report reports/major_school_list_boundary_eval_20260602.md` 跑通 16/16；相关单测 `python -m pytest tests\function_calls\major_school_list tests\test_retrieval_tools.py -q` 跑通 78/78。
 
 ### 1.2 原始需求完成度
 
