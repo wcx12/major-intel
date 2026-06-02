@@ -319,6 +319,87 @@ def _coerce_positive_limit(limit: Any, default: int = 5) -> int:
         return default
 
 
+_SCHOOL_EMPLOYMENT_SUMMARY_KEYS = [
+    "employment_data",
+    "employment_rate",
+    "further_study_rate",
+    "avg_salary",
+    "top_employment_industries",
+    "top_employment_regions",
+    "top_employers",
+]
+
+_EMPLOYMENT_SUMMARY_RECORD_KEYS = _SCHOOL_EMPLOYMENT_SUMMARY_KEYS
+
+
+def _has_profile_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip() not in {"", "-", "—", "null", "None", "暂无数据"}
+    if isinstance(value, (list, dict, tuple, set)):
+        return bool(value)
+    return True
+
+
+def _has_numeric_profile_value(value: Any) -> bool:
+    if not _has_profile_value(value):
+        return False
+    try:
+        return float(str(value).strip()) > 0
+    except (TypeError, ValueError):
+        return True
+
+
+def _has_major_salary_reference(major: dict[str, Any]) -> bool:
+    return any(_has_numeric_profile_value(major.get(key)) for key in ("salaryavg", "fivesalaryavg"))
+
+
+_MAJOR_JOB_DIRECTION_MAX_CHARS = 120
+
+
+def _compact_major_job_direction(value: str) -> tuple[str, bool]:
+    text = value.strip()
+    if len(text) <= _MAJOR_JOB_DIRECTION_MAX_CHARS:
+        return text, False
+    return text[:_MAJOR_JOB_DIRECTION_MAX_CHARS].rstrip() + "...", True
+
+
+def _major_job_directions(major: dict[str, Any]) -> tuple[list[str], bool]:
+    raw = major.get("job_clean") or major.get("job") or major.get("do_what")
+    directions = []
+    truncated = False
+    for part in _split_text(raw):
+        if not _has_profile_value(part):
+            continue
+        compacted, was_truncated = _compact_major_job_direction(part)
+        directions.append(compacted)
+        truncated = truncated or was_truncated
+    return directions, truncated
+
+
+def _major_normalization_context(original_text: Any, normalized_text: Any) -> str:
+    original = "".join(str(original_text or "").split())
+    normalized = str(normalized_text or "").strip()
+    if not original or not normalized or original == normalized:
+        return ""
+    if original.startswith(normalized):
+        return original[len(normalized) :].strip()
+    return original
+
+
+def _has_school_employment_summary(row: dict[str, Any] | None) -> bool:
+    if not row:
+        return False
+    return any(_has_profile_value(row.get(key)) for key in _SCHOOL_EMPLOYMENT_SUMMARY_KEYS)
+
+
+def _has_employment_summary_record(row: dict[str, Any] | None) -> bool:
+    if not row:
+        return False
+    return any(_has_profile_value(row.get(key)) for key in _EMPLOYMENT_SUMMARY_RECORD_KEYS)
+
+
 def _dedupe_major_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
@@ -616,29 +697,52 @@ class RetrievalTools:
     def major_profile(self, major_text: str) -> dict[str, Any]:
         """Return major-level profile data from `edu_major`."""
 
-        major_result = self.major_lookup(major_text, limit=1)
+        major_result = self.major_lookup(major_text)
         if major_result["status"] != "ok":
             return major_result | {"tool_name": "major_profile"}
 
         major = major_result["data"]["selected_major"]
+        normalized_slots = dict(major_result["normalized_slots"])
+        normalization_context = _major_normalization_context(
+            major_text,
+            normalized_slots.get("normalized_major_text"),
+        )
+        job_directions, job_directions_truncated = _major_job_directions(major)
+        data_gaps = list(major_result.get("data_gaps") or [])
+        warnings = list(major_result.get("warnings") or [])
+        if not _has_major_salary_reference(major):
+            data_gaps.append("专业通用薪资参考")
+            warnings.append("本地库缺少有效专业通用薪资参考，不能据此判断薪资水平。")
+        if not job_directions:
+            data_gaps.append("专业通用就业方向")
+            warnings.append("本地库缺少有效专业通用就业方向，不能据此判断就业去向。")
+        if normalization_context:
+            normalized_slots["original_major_text"] = major_text
+            normalized_slots["major_text_context"] = normalization_context
+            warnings.append(f"已按基础专业查询；原输入包含上下文：{normalization_context}。")
+        if job_directions_truncated:
+            warnings.append("专业通用就业方向文本较长，已截断为摘要片段。")
+
         return tool_result(
             "major_profile",
             "ok",
             {"major_text": major_text},
-            normalized_slots=major_result["normalized_slots"],
+            normalized_slots=normalized_slots,
             data={
                 "major": major,
                 "salary_reference": {
                     "salaryavg": major.get("salaryavg"),
                     "fivesalaryavg": major.get("fivesalaryavg"),
                 },
-                "job_directions": _split_text(major.get("job_clean") or major.get("job") or major.get("do_what")),
+                "job_directions": job_directions,
             },
             scope_notes=[
                 "专业资料来自 edu_major，是专业通用级数据。",
                 "薪资和就业方向不代表某学校某专业毕业生真实结果。",
             ],
+            data_gaps=_distinct_texts(data_gaps),
             source_tables=_merge_source_tables(major_result["source_tables"], ["edu_major"]),
+            warnings=_distinct_texts(warnings),
         )
 
     def school_major_list(

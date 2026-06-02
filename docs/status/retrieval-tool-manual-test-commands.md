@@ -103,9 +103,19 @@ python scripts/retrieval_tools.py major_profile --major "软件工程"
 
 ```powershell
 python scripts/retrieval_tools.py major_profile --major "软工"
+python scripts/retrieval_tools.py major_profile --major "电信"
+python scripts/retrieval_tools.py major_profile --major "计算机科学与技术（师范）"
+python scripts/retrieval_tools.py major_profile --major "计算机科学与技术"
 ```
 
-重点看：专业门类、专业类、学制、学位、通用就业方向；这不是某学校该专业的就业结论。
+重点看：
+
+- 标准名、代码、确认别名是否解析到正确 `major_code`。
+- 歧义输入是否返回 `needs_clarification` 并保留多个候选。
+- 同名本科/专科专业是否保留层次 warning。
+- 薪资或就业方向缺失时是否进入 `data_gaps`。
+- `师范`、`中外合作办学` 等后缀是否保留在 `normalized_slots.major_text_context` 或 warning。
+- 这只是专业通用画像，不是某学校该专业的就业、培养质量或录取结论。
 
 ## 5. `school_major_list`
 

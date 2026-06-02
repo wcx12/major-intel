@@ -149,6 +149,123 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertIn("alias_normalized = '计科'", tools.client.queries[-1])
         self.assertNotIn("special_name LIKE '%计科%'", tools.client.queries[-1])
 
+    def test_major_profile_preserves_lookup_cross_level_warning(self):
+        clinical_undergraduate = {
+            **MAJOR,
+            "special_id": "267",
+            "code": "100201K",
+            "special_name": "临床医学",
+            "type_name": None,
+            "level2_name": "医学",
+            "level3_name": "临床医学类",
+            "degree": "医学学士",
+            "job_clean": "医疗机构：临床诊断、手术治疗",
+        }
+        clinical_specialist = {
+            **clinical_undergraduate,
+            "special_id": "520101",
+            "code": "520101",
+            "type_name": "专科(普通)",
+            "degree": None,
+        }
+        tools = RetrievalTools(FakeClient([("FROM edu_major", [clinical_undergraduate, clinical_specialist])]))
+
+        result = tools.major_profile("临床医学")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["normalized_slots"]["major_code"], "100201K")
+        self.assertIn("同名专业存在多个层次", result["warnings"][0])
+
+    def test_major_profile_keeps_clarification_candidates_wide(self):
+        electronic_info = {
+            **MAJOR,
+            "special_id": "080701",
+            "code": "080701",
+            "special_name": "电子信息工程",
+            "level3_name": "电子信息类",
+            "alias_text": "电信",
+            "alias_confidence": "0.850",
+        }
+        communication = {
+            **MAJOR,
+            "special_id": "167",
+            "code": "080703",
+            "special_name": "通信工程",
+            "level3_name": "电子信息类",
+            "alias_text": "电信",
+            "alias_confidence": "0.750",
+        }
+        tools = RetrievalTools(FakeClient([("FROM entity_aliases a", [electronic_info, communication])]))
+
+        result = tools.major_profile("电信")
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(
+            {candidate["special_name"] for candidate in result["data"]["candidates"]},
+            {"电子信息工程", "通信工程"},
+        )
+
+    def test_major_profile_marks_missing_salary_and_job_direction_gaps(self):
+        empty_profile_major = {
+            **MAJOR,
+            "salaryavg": None,
+            "fivesalaryavg": None,
+            "job_clean": "",
+            "job": None,
+            "do_what": None,
+        }
+        tools = RetrievalTools(FakeClient([("FROM edu_major", [empty_profile_major])]))
+
+        result = tools.major_profile("计算机科学与技术")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["job_directions"], [])
+        self.assertIn("专业通用薪资参考", result["data_gaps"])
+        self.assertIn("专业通用就业方向", result["data_gaps"])
+
+    def test_major_profile_filters_placeholder_job_direction_as_gap(self):
+        placeholder_profile_major = {
+            **MAJOR,
+            "salaryavg": "0",
+            "fivesalaryavg": "0",
+            "job_clean": "暂无数据",
+            "job": None,
+            "do_what": None,
+        }
+        tools = RetrievalTools(FakeClient([("FROM edu_major", [placeholder_profile_major])]))
+
+        result = tools.major_profile("护理")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["job_directions"], [])
+        self.assertIn("专业通用薪资参考", result["data_gaps"])
+        self.assertIn("专业通用就业方向", result["data_gaps"])
+
+    def test_major_profile_preserves_normalized_suffix_context(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_major", [MAJOR])]))
+
+        result = tools.major_profile("计算机科学与技术（师范）")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["normalized_slots"]["major_code"], "080901")
+        self.assertEqual(result["normalized_slots"]["original_major_text"], "计算机科学与技术（师范）")
+        self.assertIn("师范", result["normalized_slots"]["major_text_context"])
+        self.assertIn("基础专业", result["warnings"][-1])
+
+    def test_major_profile_compacts_long_job_direction_text(self):
+        long_profile_major = {
+            **MAJOR,
+            "job_clean": "就业方向：" + "软件工程行业发展前景广阔毕业生可以从事研发测试架构项目管理等工作" * 8,
+        }
+        tools = RetrievalTools(FakeClient([("FROM edu_major", [long_profile_major])]))
+
+        result = tools.major_profile("软件工程")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertLessEqual(max(len(item) for item in result["data"]["job_directions"]), 123)
+        self.assertTrue(result["data"]["job_directions"][0].endswith("..."))
+        self.assertIn("就业方向文本较长", result["warnings"][-1])
+
     def test_school_major_list_uses_school_code_and_explains_scope(self):
         tools = RetrievalTools(
             FakeClient(

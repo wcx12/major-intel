@@ -418,12 +418,18 @@ edu_university_employment
 
 ```text
 edu_major
+entity_aliases（当专业名称通过确认别名解析时）
 ```
 
 口径说明：
 
 - 薪资是专业通用参考，不代表某校某专业真实薪资。
 - 就业方向是通用方向，不代表具体毕业去向。
+- `major_profile` 必须继承 `major_lookup` 的歧义、层次和别名来源提示；例如同名本科/专科专业时保留 warning。
+- 专业实体解析成功但薪资或就业方向为空、为 `0` 或为 `暂无数据` 时，工具仍可返回 `ok`，同时在 `data_gaps` 标出 `专业通用薪资参考` 或 `专业通用就业方向`。
+- 专业简称或宽泛输入命中多个候选时，工具返回 `needs_clarification` 并保留多个候选，不能把第一候选当作目标专业。
+- 输入包含 `师范`、`中外合作办学`、学制等后缀时，工具按基础专业查询，并在 `normalized_slots.major_text_context` 和 warning 中保留原始上下文。
+- 超长就业方向文本会截断为摘要片段并标 warning；上层 agent 不应把该片段当作完整就业质量结论。
 
 ### 5. `school_major_list`
 

@@ -112,7 +112,7 @@ $env:GAOKAO_DB_PASSWORD = "<你的本地密码>"
 | `school_lookup` | 解析学校名称、简称或代码 | 实体解析，不直接给结论 |
 | `major_lookup` | 解析专业名称、简称或代码 | 已接数据库别名，避免短简称误匹配 |
 | `school_profile` | 学校概况 | 学校基础、双一流、学科评估、学校级就业摘要 |
-| `major_profile` | 专业概况 | 专业通用信息，不代表某校某专业 |
+| `major_profile` | 专业概况 | 专业通用信息；保留解析 warning、画像缺口和后缀上下文，不代表某校某专业 |
 | `school_major_list` | 某学校开设专业列表 | 不等于某省当年招生计划 |
 | `major_school_list` | 开设某专业的学校列表 | 可做省份/层次粗筛 |
 | `school_major_profile` | 某校某专业综合画像 | 合并学校、专业、学科评估、缺口提示 |
@@ -308,6 +308,7 @@ python scripts/retrieval_function_registry.py call --tool major_lookup --argumen
 
 ```powershell
 python scripts/retrieval_tools.py major_lookup --major "计科"
+python scripts/retrieval_tools.py major_profile --major "计算机科学与技术（师范）"
 python scripts/retrieval_tools.py school_major_list --school "杭州电子科技大学"
 python scripts/retrieval_tools.py rank_to_major_match --province "广东" --subject-type "物理" --score 580 --major "计算机"
 ```
