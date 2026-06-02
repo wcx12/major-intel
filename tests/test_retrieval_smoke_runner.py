@@ -79,6 +79,40 @@ class RetrievalSmokeRunnerTests(unittest.TestCase):
             ],
         )
 
+    def test_build_command_repeats_comparison_append_flags(self):
+        case = {
+            "tool": "comparison_query",
+            "args": {
+                "target_type": "school",
+                "target": ["杭州电子科技大学", "浙江大学"],
+                "dimension": ["school_profile", "admission"],
+                "limit": 5,
+            },
+        }
+
+        command = build_command("python", Path("scripts/retrieval_tools.py"), case)
+
+        self.assertEqual(
+            command,
+            [
+                "python",
+                "scripts/retrieval_tools.py",
+                "comparison_query",
+                "--target-type",
+                "school",
+                "--target",
+                "杭州电子科技大学",
+                "--target",
+                "浙江大学",
+                "--dimension",
+                "school_profile",
+                "--dimension",
+                "admission",
+                "--limit",
+                "5",
+            ],
+        )
+
     def test_validate_payload_checks_envelope_status_and_expected_data_keys(self):
         case = {
             "id": "major_lookup_cs",
@@ -148,38 +182,13 @@ class RetrievalSmokeRunnerTests(unittest.TestCase):
         self.assertEqual(summary["by_tool"]["major_lookup"]["error"], 1)
 
     def test_default_case_file_is_large_and_covers_every_retrieval_entry(self):
+        from scripts.retrieval_function_registry import RETRIEVAL_FUNCTION_NAMES
+
         cases = load_cases(DEFAULT_CASES_PATH)
         tools = {case["tool"] for case in cases}
 
         self.assertGreaterEqual(len(cases), 150)
-        self.assertEqual(
-            tools,
-            {
-                "school_lookup",
-                "major_lookup",
-                "school_profile",
-                "major_profile",
-                "school_major_list",
-                "major_school_list",
-                "school_major_profile",
-                "score_to_rank",
-                "rank_to_school_match",
-                "rank_to_major_match",
-                "specialty_group_lookup",
-                "subject_requirement_lookup",
-                "school_department_major_list",
-                "plan_history",
-                "employment_summary",
-                "source_trace_lookup",
-                "transfer_policy_lookup",
-                "fee_and_campus_lookup",
-                "specialty_group_risk",
-                "admission_history",
-                "major_market_reference",
-                "civil_service_role_search",
-                "data_gap_detection",
-            },
-        )
+        self.assertEqual(tools, set(RETRIEVAL_FUNCTION_NAMES))
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 
 - 本地 MySQL 检索工具层。
 - 27 个正式 function call schema 与 dispatcher。
+- 27 个正式工具的真实库 smoke 矩阵，当前展开后为 305 个用例。
 - 第一版 SQL-first RAG：本地 function call 负责检索，MySQL 查询结果作为回答上下文。
 - DeepSeek function-call agent。
 - 离线规则自然语言入口。
@@ -26,6 +27,8 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 - 校专业级就业事实库：就业地域分布、薪资分布、Top 公司、升学去向、学校官网专业介绍证据链。
 
 更细的阶段性状态见 [docs/status/current-state.md](docs/status/current-state.md)。
+
+如果要人工逐个测试 27 个底层工具，命令清单见 [docs/status/retrieval-tool-manual-test-commands.md](docs/status/retrieval-tool-manual-test-commands.md)。
 
 ## 系统分层
 
@@ -315,14 +318,27 @@ python scripts/retrieval_tools.py rank_to_major_match --province "广东" --subj
 python scripts/run_retrieval_smoke_cases.py --cases data/retrieval_smoke_cases.json
 ```
 
+每个工具抽样 1 条真实库用例：
+
+```powershell
+python scripts/run_retrieval_smoke_cases.py --sample-per-tool 1 --report reports/retrieval_smoke_sample_27_tools.json
+```
+
 ## 当前测试状态
 
 最近一次完整验证：
 
 ```text
-python -m unittest discover -s tests
-Ran 112 tests
+python -m unittest tests.test_retrieval_smoke_runner
+Ran 7 tests
 OK
+
+python -m unittest discover -s tests
+Ran 133 tests
+OK
+
+python scripts/run_retrieval_smoke_cases.py --report reports/retrieval_smoke_27_tools_full.json --timeout 60
+total 305, passed 305, failed 0, quality_misses 0
 ```
 
 专项覆盖：
@@ -362,10 +378,9 @@ OK
 
 当前最优先：
 
-1. 补齐 27 个正式工具的真实库 smoke 矩阵，确认每个 function call 在本地 MySQL 都能稳定返回结构化上下文。
-2. 修一轮工具输出质量，重点看 `scope_notes`、`warnings`、`data_gaps` 和 `ok/partial/not_found` 状态是否一致。
-3. 再为分流、招生政策、考公映射补事实表和写回字段。
-4. 最后让联网 agent 消费 `data_gap_evidence_tasks.ready`，做官方来源发现、抓取、抽取和人工复核。
+1. 继续人工抽测 27 个工具，记录命令、输入、预期和异常样例。
+2. 为分流、招生政策、考公映射补事实表和写回字段。
+3. 最后让联网 agent 消费 `data_gap_evidence_tasks.ready`，做官方来源发现、抓取、抽取和人工复核。
 
 下面是已经完成或规划过的阶段记录。
 

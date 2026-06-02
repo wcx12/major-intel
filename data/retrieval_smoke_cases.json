@@ -214,30 +214,30 @@
       "allowed_statuses": ["ok", "partial", "not_found"],
       "expected_data_keys": ["school", "major", "school_major", "available_fields"],
       "args_list": [
-        {"id_suffix": "hdu_cs_gd_2025", "args": {"school": "杭州电子科技大学", "major": "计算机科学与技术", "province": "广东", "subject_type": "物理", "year": 2025}},
-        {"id_suffix": "hdu_software_zj_2025", "args": {"school": "杭州电子科技大学", "major": "软件工程", "province": "浙江", "subject_type": "物理", "year": 2025}},
-        {"id_suffix": "hdu_ai_zj_2025", "args": {"school": "杭州电子科技大学", "major": "人工智能", "province": "浙江", "subject_type": "物理", "year": 2025}},
-        {"id_suffix": "zju_cs_zj_2025", "args": {"school": "浙江大学", "major": "计算机科学与技术", "province": "浙江", "subject_type": "物理", "year": 2025}},
+        {"id_suffix": "hdu_cs_gd_2025", "args": {"school": "杭州电子科技大学", "major": "计算机科学与技术", "province": "广东", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
+        {"id_suffix": "hdu_software_zj_2025", "args": {"school": "杭州电子科技大学", "major": "软件工程", "province": "浙江", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
+        {"id_suffix": "hdu_ai_zj_2025", "args": {"school": "杭州电子科技大学", "major": "人工智能", "province": "浙江", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
+        {"id_suffix": "zju_cs_zj_2025", "args": {"school": "浙江大学", "major": "计算机科学与技术", "province": "浙江", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
         {"id_suffix": "zjut_software_zj_2025", "args": {"school": "浙江工业大学", "major": "软件工程", "province": "浙江", "subject_type": "物理", "year": 2025}},
-        {"id_suffix": "nbu_cs_zj_2025", "args": {"school": "宁波大学", "major": "计算机科学与技术", "province": "浙江", "subject_type": "物理", "year": 2025}},
+        {"id_suffix": "nbu_cs_zj_2025", "args": {"school": "宁波大学", "major": "计算机科学与技术", "province": "浙江", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
         {"id_suffix": "shust_mechanical_sh_2025", "args": {"school": "上海理工大学", "major": "机械设计制造及其自动化", "province": "上海", "subject_type": "物理", "year": 2025}},
-        {"id_suffix": "sues_vehicle_sh_2025", "args": {"school": "上海工程技术大学", "major": "车辆工程", "province": "上海", "subject_type": "物理", "year": 2025}},
+        {"id_suffix": "sues_vehicle_sh_2025", "args": {"school": "上海工程技术大学", "major": "车辆工程", "province": "上海", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
         {"id_suffix": "njupt_comm_js_2025", "args": {"school": "南京邮电大学", "major": "通信工程", "province": "江苏", "subject_type": "物理", "year": 2025}},
         {"id_suffix": "szu_cs_gd_2025", "args": {"school": "深圳大学", "major": "计算机科学与技术", "province": "广东", "subject_type": "物理", "year": 2025}},
-        {"id_suffix": "gdut_auto_gd_2025", "args": {"school": "广东工业大学", "major": "自动化", "province": "广东", "subject_type": "物理", "year": 2025}},
-        {"id_suffix": "uestc_ee_sc_2025", "args": {"school": "电子科技大学", "major": "电子信息工程", "province": "四川", "subject_type": "理科", "year": 2025}},
-        {"id_suffix": "xidian_cyber_sx_2025", "args": {"school": "西安电子科技大学", "major": "网络空间安全", "province": "陕西", "subject_type": "理科", "year": 2025}},
-        {"id_suffix": "cqupt_comm_cq_2025", "args": {"school": "重庆邮电大学", "major": "通信工程", "province": "重庆", "subject_type": "物理", "year": 2025}},
-        {"id_suffix": "bupt_cs_bj_2025", "args": {"school": "北京邮电大学", "major": "计算机科学与技术", "province": "北京", "subject_type": "综合", "year": 2025}},
-        {"id_suffix": "hust_clinical_hb_2025", "args": {"school": "华中科技大学", "major": "临床医学", "province": "湖北", "subject_type": "物理", "year": 2025}},
-        {"id_suffix": "whu_law_hb_2025", "args": {"school": "武汉大学", "major": "法学", "province": "湖北", "subject_type": "历史", "year": 2025}},
-        {"id_suffix": "csu_auto_hn_2025", "args": {"school": "中南大学", "major": "自动化", "province": "湖南", "subject_type": "物理", "year": 2025}},
-        {"id_suffix": "swjtu_transport_sc_2025", "args": {"school": "西南交通大学", "major": "交通运输", "province": "四川", "subject_type": "理科", "year": 2025}},
-        {"id_suffix": "hdu_cs_no_context", "args": {"school": "杭州电子科技大学", "major": "计算机科学与技术"}},
+        {"id_suffix": "gdut_auto_gd_2025", "args": {"school": "广东工业大学", "major": "自动化", "province": "广东", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
+        {"id_suffix": "uestc_ee_sc_2025", "args": {"school": "电子科技大学", "major": "电子信息工程", "province": "四川", "subject_type": "理科", "year": 2025}, "target_status": "partial"},
+        {"id_suffix": "xidian_cyber_sx_2025", "args": {"school": "西安电子科技大学", "major": "网络空间安全", "province": "陕西", "subject_type": "理科", "year": 2025}, "target_status": "partial"},
+        {"id_suffix": "cqupt_comm_cq_2025", "args": {"school": "重庆邮电大学", "major": "通信工程", "province": "重庆", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
+        {"id_suffix": "bupt_cs_bj_2025", "args": {"school": "北京邮电大学", "major": "计算机科学与技术", "province": "北京", "subject_type": "综合", "year": 2025}, "target_status": "partial"},
+        {"id_suffix": "hust_clinical_hb_2025", "args": {"school": "华中科技大学", "major": "临床医学", "province": "湖北", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
+        {"id_suffix": "whu_law_hb_2025", "args": {"school": "武汉大学", "major": "法学", "province": "湖北", "subject_type": "历史", "year": 2025}, "target_status": "partial"},
+        {"id_suffix": "csu_auto_hn_2025", "args": {"school": "中南大学", "major": "自动化", "province": "湖南", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
+        {"id_suffix": "swjtu_transport_sc_2025", "args": {"school": "西南交通大学", "major": "交通运输", "province": "四川", "subject_type": "理科", "year": 2025}, "target_status": "partial"},
+        {"id_suffix": "hdu_cs_no_context", "args": {"school": "杭州电子科技大学", "major": "计算机科学与技术"}, "target_status": "partial"},
         {"id_suffix": "hdu_nonexistent_major", "args": {"school": "杭州电子科技大学", "major": "星际航道规划与管理"}, "target_status": "not_found"},
         {"id_suffix": "nonexistent_school_cs", "args": {"school": "不存在大学测试样本999", "major": "计算机科学与技术"}, "target_status": "not_found"},
         {"id_suffix": "hdu_mechanical_gd_2024", "args": {"school": "杭州电子科技大学", "major": "机械设计制造及其自动化", "province": "广东", "subject_type": "物理", "year": 2024}},
-        {"id_suffix": "hdu_accounting_zj_2025", "args": {"school": "杭州电子科技大学", "major": "会计学", "province": "浙江", "subject_type": "不限", "year": 2025}}
+        {"id_suffix": "hdu_accounting_zj_2025", "args": {"school": "杭州电子科技大学", "major": "会计学", "province": "浙江", "subject_type": "不限", "year": 2025}, "target_status": "partial"}
       ]
     },
     {
@@ -270,7 +270,7 @@
         {"id_suffix": "guangxi_physics_560_2025", "args": {"province": "广西", "subject_type": "物理", "score": 560, "year": 2025}},
         {"id_suffix": "province_id_44_580_2025", "args": {"province": "44", "subject_type": "物理", "score": 580, "year": 2025}},
         {"id_suffix": "gd_physics_750_2025", "args": {"province": "广东", "subject_type": "物理", "score": 750, "year": 2025}},
-        {"id_suffix": "gd_physics_0_2025", "args": {"province": "广东", "subject_type": "物理", "score": 0, "year": 2025}},
+        {"id_suffix": "gd_physics_0_2025", "args": {"province": "广东", "subject_type": "物理", "score": 0, "year": 2025}, "target_status": "not_found"},
         {"id_suffix": "gd_physics_580_no_year", "args": {"province": "广东", "subject_type": "物理", "score": 580}},
         {"id_suffix": "unknown_province", "args": {"province": "不存在省份", "subject_type": "物理", "score": 580, "year": 2025}, "target_status": "needs_clarification"},
         {"id_suffix": "unknown_subject", "args": {"province": "广东", "subject_type": "飞行", "score": 580, "year": 2025}, "target_status": "not_found"}
@@ -426,6 +426,60 @@
         {"id_suffix": "hdu_cs_gd_2024", "args": {"school": "杭州电子科技大学", "major": "计科", "province": "广东", "subject_type": "物理", "year": 2024}},
         {"id_suffix": "bjtu_software_gd_2024", "args": {"school": "北京交通大学", "major": "软件工程", "province": "广东", "subject_type": "物理", "year": 2024}},
         {"id_suffix": "unknown_school", "args": {"school": "不存在大学测试样本999", "province": "广东", "year": 2024}, "target_status": "not_found"}
+      ]
+    },
+    {
+      "id_prefix": "comparison_query",
+      "tool": "comparison_query",
+      "category": "comparison",
+      "allowed_statuses": ["ok", "partial", "not_found", "needs_clarification"],
+      "expected_data_keys": ["target_type", "targets", "dimensions", "decision_policy"],
+      "args_list": [
+        {"id_suffix": "school_hdu_zju", "args": {"target_type": "school", "target": ["杭州电子科技大学", "浙江大学"], "dimension": ["school_profile", "admission"], "limit": 5}, "target_status": "ok"},
+        {"id_suffix": "school_major_hdu_zjut_cs", "args": {"target_type": "school_major", "target": ["杭州电子科技大学", "浙江工业大学"], "major": "计算机科学与技术", "province": "浙江", "subject_type": "物理", "year": 2025, "dimension": ["school_major_profile", "admission"], "limit": 5}},
+        {"id_suffix": "major_cs_software", "args": {"target_type": "major", "target": ["计算机科学与技术", "软件工程"], "dimension": ["major_profile", "market_reference"], "limit": 5}},
+        {"id_suffix": "missing_second_target", "args": {"target_type": "school", "target": ["杭州电子科技大学"], "limit": 5}, "target_status": "needs_clarification"}
+      ]
+    },
+    {
+      "id_prefix": "major_streaming_policy_lookup",
+      "tool": "major_streaming_policy_lookup",
+      "category": "policy",
+      "target_status": "partial",
+      "allowed_statuses": ["partial", "not_found"],
+      "expected_data_keys": ["school", "major", "group_context"],
+      "args_list": [
+        {"id_suffix": "hdu_cs_zj_2025", "args": {"school": "杭州电子科技大学", "major": "计算机", "province": "浙江", "year": 2025, "limit": 5}},
+        {"id_suffix": "zju_cs_zj_2025", "args": {"school": "浙江大学", "major": "计算机科学与技术", "province": "浙江", "year": 2025, "limit": 5}},
+        {"id_suffix": "unknown_school", "args": {"school": "不存在大学测试样本999", "major": "计算机", "province": "浙江", "year": 2025, "limit": 5}, "target_status": "not_found"}
+      ]
+    },
+    {
+      "id_prefix": "civil_service_mapping",
+      "tool": "civil_service_mapping",
+      "category": "civil_service",
+      "target_status": "partial",
+      "allowed_statuses": ["partial", "not_found"],
+      "expected_data_keys": ["major", "role_samples"],
+      "args_list": [
+        {"id_suffix": "cs_2026", "args": {"major": "计算机科学与技术", "year": 2026, "limit": 5}},
+        {"id_suffix": "software_2026", "args": {"major": "软件工程", "year": 2026, "limit": 5}},
+        {"id_suffix": "law_2026", "args": {"major": "法学", "year": 2026, "limit": 5}},
+        {"id_suffix": "unknown_major", "args": {"major": "星际航道规划与管理", "year": 2026, "limit": 5}, "target_status": "not_found"}
+      ]
+    },
+    {
+      "id_prefix": "policy_rule_lookup",
+      "tool": "policy_rule_lookup",
+      "category": "policy",
+      "target_status": "partial",
+      "allowed_statuses": ["partial", "not_found"],
+      "expected_data_keys": ["school", "policy_type", "known_policy_items"],
+      "args_list": [
+        {"id_suffix": "hdu_single_subject_zj_2025", "args": {"school": "杭州电子科技大学", "policy_type": "单科限制", "province": "浙江", "year": 2025}},
+        {"id_suffix": "zju_admission_rule_zj_2025", "args": {"school": "浙江大学", "policy_type": "招生章程", "province": "浙江", "year": 2025}},
+        {"id_suffix": "hdu_language_gd_2025", "args": {"school": "杭州电子科技大学", "policy_type": "外语语种", "province": "广东", "year": 2025}},
+        {"id_suffix": "unknown_school", "args": {"school": "不存在大学测试样本999", "policy_type": "招生章程", "province": "浙江", "year": 2025}, "target_status": "not_found"}
       ]
     },
     {

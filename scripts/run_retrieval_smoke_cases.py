@@ -35,6 +35,15 @@ ENVELOPE_KEYS = [
     "warnings",
 ]
 DEFAULT_ALLOWED_STATUSES = ["ok", "partial", "not_found", "needs_clarification"]
+REPEATABLE_LIST_FLAGS_BY_TOOL = {
+    # The JSON smoke matrix represents multi-value arguments as Python lists,
+    # but argparse has two incompatible list styles. `action="append"` options
+    # must repeat the flag (`--target A --target B`), while `nargs="*"` options
+    # intentionally keep one flag followed by many values (`--years 2025 2024`).
+    # Keeping this map explicit makes future CLI shape changes visible in tests
+    # instead of silently generating commands that argparse rejects.
+    "comparison_query": {"target", "dimension"},
+}
 
 
 def load_cases(path: str | Path = DEFAULT_CASES_PATH) -> list[dict[str, Any]]:
@@ -64,6 +73,7 @@ def build_command(python_executable: str, script_path: str | Path, case: dict[st
     """Convert one case into a retrieval_tools.py CLI command."""
 
     command = [python_executable, Path(script_path).as_posix(), case["tool"]]
+    repeatable_flags = REPEATABLE_LIST_FLAGS_BY_TOOL.get(case["tool"], set())
     for key, value in case.get("args", {}).items():
         if value is None or value is False:
             continue
@@ -71,8 +81,12 @@ def build_command(python_executable: str, script_path: str | Path, case: dict[st
         if isinstance(value, list):
             if not value:
                 continue
-            command.append(flag)
-            command.extend(str(item) for item in value)
+            if key in repeatable_flags:
+                for item in value:
+                    command.extend([flag, str(item)])
+            else:
+                command.append(flag)
+                command.extend(str(item) for item in value)
         elif value is True:
             command.append(flag)
         else:

@@ -6,6 +6,8 @@ from scripts.local_retrieval_mvp import (
     build_school_major_sql,
     render_markdown_answer,
     resolve_major_sql,
+    resolve_school_alias_candidates_sql,
+    resolve_school_sql,
 )
 
 
@@ -55,6 +57,23 @@ class LocalRetrievalMvpTests(unittest.TestCase):
         self.assertIn("alias_normalized = '计科'", sql)
         self.assertNotIn("计算机科学与技术", sql)
         self.assertNotIn("special_name LIKE '%计科%'", sql)
+
+    def test_school_lookup_uses_confirmed_alias_table_for_short_names(self):
+        sql = resolve_school_sql("杭电")
+
+        self.assertIn("FROM entity_aliases", sql)
+        self.assertIn("entity_type = 'school'", sql)
+        self.assertIn("alias_normalized = '杭电'", sql)
+        self.assertIn("name IN (", sql)
+        self.assertIn("code IN (", sql)
+
+    def test_school_alias_candidate_sql_orders_without_distinct_mysql_conflict(self):
+        sql = resolve_school_alias_candidates_sql("中大")
+
+        self.assertNotIn("SELECT DISTINCT", sql)
+        self.assertIn("FROM entity_aliases a", sql)
+        self.assertIn("JOIN edu_university u", sql)
+        self.assertIn("ORDER BY a.confidence DESC, u.hits DESC", sql)
 
     def test_parse_mysql_tsv_decodes_escaped_newlines_and_nulls(self):
         rows = _parse_mysql_tsv("id\tdescription\toptional\n1\t第一行\\r\\n第二行\tNULL\n")

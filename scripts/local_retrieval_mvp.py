@@ -84,6 +84,8 @@ class MysqlCliClient:
 def resolve_school_sql(text: str, limit: int = 5) -> str:
     query = sql_quote(text)
     like = sql_quote(f"%{text}%")
+    alias_names = _entity_alias_subquery_sql("school", text, "canonical_name")
+    alias_codes = _entity_alias_subquery_sql("school", text, "canonical_code")
     return f"""
 SELECT school_id, code, name, province_name, city_name, type_name, level_name,
        is985, is211, is_dual_class, dual_class, school_site, site
@@ -93,6 +95,8 @@ WHERE deleted = b'0'
     name = {query}
     OR code = {query}
     OR school_id = {query}
+    OR name IN ({alias_names})
+    OR code IN ({alias_codes})
     OR short LIKE {like}
     OR old_name LIKE {like}
     OR name LIKE {like}
@@ -102,10 +106,34 @@ ORDER BY
     WHEN name = {query} THEN 0
     WHEN code = {query} THEN 1
     WHEN school_id = {query} THEN 2
-    WHEN name LIKE {like} THEN 3
+    WHEN name IN ({alias_names}) THEN 3
+    WHEN code IN ({alias_codes}) THEN 4
+    WHEN short LIKE {like} THEN 5
+    WHEN old_name LIKE {like} THEN 6
+    WHEN name LIKE {like} THEN 7
     ELSE 9
   END,
   hits DESC
+LIMIT {int(limit)}
+""".strip()
+
+
+def resolve_school_alias_candidates_sql(text: str, limit: int = 20) -> str:
+    normalized = sql_quote(_normalize_alias_query(text))
+    return f"""
+SELECT u.school_id, u.code, u.name, u.province_name, u.city_name,
+       u.type_name, u.level_name, u.is985, u.is211, u.is_dual_class,
+       u.dual_class, u.school_site, u.site,
+       a.alias_text, a.confidence AS alias_confidence
+FROM entity_aliases a
+JOIN edu_university u
+  ON u.name = a.canonical_name
+WHERE a.entity_type = 'school'
+  AND a.alias_normalized = {normalized}
+  AND a.status = 'active'
+  AND (a.deleted IS NULL OR a.deleted = b'0')
+  AND u.deleted = b'0'
+ORDER BY a.confidence DESC, u.hits DESC
 LIMIT {int(limit)}
 """.strip()
 
@@ -159,12 +187,25 @@ LIMIT {int(limit)}
 
 
 def _major_alias_subquery_sql(text: str, column: str) -> str:
-    normalized = sql_quote(_normalize_major_query(text))
+    return _entity_alias_subquery_sql("major", text, column)
+
+
+def _entity_alias_subquery_sql(entity_type: str, text: str, column: str) -> str:
+    """Return canonical names/codes from confirmed database aliases.
+
+    Short names such as "杭电" or "计科" are too ambiguous for raw `LIKE`
+    matching.  The shared `entity_aliases` table is the conservative path:
+    only manually confirmed, active aliases can promote a short user phrase to
+    a canonical school or major.  Candidate aliases stay out of retrieval until
+    an operator confirms them.
+    """
+
+    normalized = sql_quote(_normalize_alias_query(text))
     column_filter = "AND canonical_code <> ''" if column == "canonical_code" else ""
     return f"""
 SELECT {column}
 FROM entity_aliases
-WHERE entity_type = 'major'
+WHERE entity_type = {sql_quote(entity_type)}
   AND alias_normalized = {normalized}
   AND status = 'active'
   AND (deleted IS NULL OR deleted = b'0')
@@ -182,10 +223,10 @@ def _major_fuzzy_allowed(text: str) -> bool:
     name matching is held back until the query is long enough.
     """
 
-    return len(_normalize_major_query(text)) >= 3
+    return len(_normalize_alias_query(text)) >= 3
 
 
-def _normalize_major_query(text: str) -> str:
+def _normalize_alias_query(text: str) -> str:
     return re.sub(r"\s+", "", str(text or "")).lower()
 
 

@@ -79,6 +79,54 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertIn("edu_university", result["source_tables"])
         self.assertIn("学校实体解析", result["scope_notes"][0])
 
+    def test_school_lookup_uses_confirmed_alias_for_common_short_name(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_university", [SCHOOL])]))
+
+        result = tools.school_lookup("杭电")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["normalized_slots"]["school_id"], "10124")
+        self.assertIn("entity_aliases", result["source_tables"])
+        self.assertIn("entity_aliases", result["scope_notes"][0])
+        self.assertIn("entity_type = 'school'", tools.client.queries[-1])
+        self.assertIn("alias_normalized = '杭电'", tools.client.queries[-1])
+
+    def test_school_lookup_returns_clarification_for_ambiguous_confirmed_alias(self):
+        zhongshan = {
+            **SCHOOL,
+            "school_id": "10024",
+            "code": "10558",
+            "name": "中山大学",
+            "province_name": "广东",
+        }
+        zhongnan = {
+            **SCHOOL,
+            "school_id": "10041",
+            "code": "10533",
+            "name": "中南大学",
+            "province_name": "湖南",
+        }
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM entity_aliases a", [zhongshan, zhongnan]),
+                    ("FROM edu_university", [zhongshan, zhongnan]),
+                ]
+            )
+        )
+
+        result = tools.school_lookup("中大")
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["data"]["selected_school"], {})
+        self.assertEqual(
+            {candidate["name"] for candidate in result["data"]["candidates"]},
+            {"中山大学", "中南大学"},
+        )
+        self.assertEqual(result["needs_clarification"], ["school_text"])
+        self.assertIn("存在歧义", result["warnings"][0])
+        self.assertEqual(len(tools.client.queries), 1)
+
     def test_major_lookup_returns_not_found_without_guessing(self):
         tools = RetrievalTools(FakeClient([("FROM edu_major", [])]))
 
@@ -127,6 +175,38 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertIn("sm.school_id = '10336'", tools.client.queries[-1])
         self.assertIn("开设专业不等于某省当年招生专业", result["scope_notes"][0])
 
+    def test_school_major_list_returns_not_found_when_no_majors(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_university", [SCHOOL])]))
+
+        result = tools.school_major_list("杭州电子科技大学", major_category="计算机类")
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["data"]["majors"], [])
+        self.assertIn("学校开设专业记录", result["data_gaps"])
+
+    def test_major_school_list_returns_not_found_when_no_schools(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_major", [MAJOR])]))
+
+        result = tools.major_school_list("计算机科学与技术", province_filter="浙江")
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["data"]["schools"], [])
+        self.assertIn("开设该专业的学校记录", result["data_gaps"])
+
+    def test_major_school_list_filters_by_undergraduate_school_level(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_major", [MAJOR])]))
+
+        tools.major_school_list(
+            "计算机科学与技术",
+            province_filter="浙江",
+            school_level_filter="本科",
+        )
+
+        self.assertIn("u.level_name LIKE '%本科%'", tools.client.queries[-1])
+        self.assertNotIn("u.school_type", tools.client.queries[-1])
+        self.assertIn("u.level_name AS school_level_name", tools.client.queries[-1])
+        self.assertIn("sm.level_name AS major_level_name", tools.client.queries[-1])
+
     def test_school_major_profile_filters_specialty_groups_by_context(self):
         tools = RetrievalTools(
             FakeClient(
@@ -153,11 +233,183 @@ class RetrievalToolsTests(unittest.TestCase):
             year=2025,
         )
 
-        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["status"], "partial")
         group_query = tools.client.queries[-1]
         self.assertIn("g.province = '44'", group_query)
         self.assertIn("g.group_type = 'physical'", group_query)
         self.assertIn("g.year = 2025", group_query)
+
+    def test_school_major_profile_uses_department_major_evidence(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_major", [MAJOR]),
+                    ("FROM edu_school_major sm", []),
+                    (
+                        "/* school_major_evidence_chain_for_school_major_profile */",
+                        [
+                            {
+                                "source_type": "catalog",
+                                "source_table": "edu_university_department_major",
+                                "source_label": "院系专业目录证据",
+                                "school_id": "10124",
+                                "school_name": "杭州电子科技大学",
+                                "major_code": "080901",
+                                "major_name": "计算机科学与技术",
+                                "year": None,
+                                "province": None,
+                                "subject_type": None,
+                                "confidence": "medium",
+                                "detail": "计算机学院",
+                                "plan_count": None,
+                                "score": None,
+                                "rank": None,
+                            }
+                        ],
+                    ),
+                    ("FROM edu_university_subject_eval", []),
+                    ("FROM edu_dual_class", []),
+                    ("FROM edu_university_employment", []),
+                    ("FROM edu_college_specialty_group g", []),
+                ]
+            )
+        )
+
+        result = tools.school_major_profile("杭州电子科技大学", "计算机科学与技术")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["school_major_evidence"][0]["source_table"], "edu_university_department_major")
+        self.assertTrue(result["data"]["evidence_summary"]["has_department_catalog"])
+        self.assertFalse(result["data"]["evidence_summary"]["has_primary_catalog"])
+        self.assertIn("学校-专业证据链", result["data"]["available_fields"])
+        self.assertNotIn("本地库未命中明确学校-专业开设关系，不能直接认定已开设。", result["warnings"])
+
+    def test_school_major_profile_does_not_use_school_major_primary_table(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_major", [MAJOR]),
+                    (
+                        "FROM edu_school_major sm",
+                        [
+                            {
+                                "school_id": "10336",
+                                "school_name": "杭州电子科技大学",
+                                "major_code": "101101",
+                                "major_name": "护理学",
+                            }
+                        ],
+                    ),
+                    ("/* school_major_evidence_chain_for_school_major_profile */", []),
+                    ("FROM edu_university_subject_eval", []),
+                    ("FROM edu_dual_class", []),
+                    ("FROM edu_university_employment", []),
+                    ("FROM edu_college_specialty_group g", []),
+                ]
+            )
+        )
+
+        result = tools.school_major_profile("杭州电子科技大学", "护理学")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["data"]["school_major"], {})
+        self.assertFalse(result["data"]["evidence_summary"]["has_primary_catalog"])
+        self.assertNotIn("edu_school_major", result["source_tables"])
+        self.assertNotIn("edu_school_major 主表证据", result["data"]["evidence_gaps"])
+        self.assertTrue(all("FROM edu_school_major sm" not in query for query in tools.client.queries))
+
+    def test_school_major_profile_uses_raw_admission_major_when_major_lookup_fails(self):
+        raw_major = "通信工程((校本部))"
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_major", []),
+                    (
+                        "FROM edu_university_plan_config pc",
+                        [
+                            {
+                                "source_type": "plan",
+                                "source_table": "edu_university_plan_special",
+                                "source_label": "招生计划证据",
+                                "school_id": "10124",
+                                "school_name": "杭州电子科技大学",
+                                "major_code": "",
+                                "major_name": raw_major,
+                                "year": "2025",
+                                "province": "44",
+                                "subject_type": "2073",
+                                "confidence": "medium",
+                                "detail": "201",
+                                "plan_count": "2",
+                                "score": None,
+                                "rank_value": None,
+                            }
+                        ],
+                    ),
+                    ("FROM edu_university_subject_eval", []),
+                    ("FROM edu_dual_class", []),
+                    ("FROM edu_university_employment", []),
+                    ("FROM edu_college_specialty_group g", []),
+                ]
+            )
+        )
+
+        result = tools.school_major_profile("杭州电子科技大学", raw_major, province="44", year=2025)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["data"]["major"]["special_name"], raw_major)
+        self.assertEqual(result["data"]["major"]["resolution_status"], "raw_admission_name")
+        self.assertTrue(result["data"]["evidence_summary"]["has_plan"])
+        self.assertIn("招生专业原始名称", result["data"]["available_fields"])
+        self.assertIn("未映射到标准专业库", result["warnings"][0])
+
+    def test_school_major_profile_returns_partial_when_context_has_only_catalog_evidence(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_major", [MAJOR]),
+                    (
+                        "/* school_major_evidence_chain_for_school_major_profile */",
+                        [
+                            {
+                                "source_type": "catalog",
+                                "source_table": "edu_university_department_major",
+                                "source_label": "院系专业目录证据",
+                                "school_id": "10124",
+                                "school_name": "杭州电子科技大学",
+                                "major_code": "080901",
+                                "major_name": "计算机科学与技术",
+                                "year": None,
+                                "province": None,
+                                "subject_type": None,
+                                "confidence": "medium",
+                                "detail": "计算机学院",
+                            }
+                        ],
+                    ),
+                    ("FROM edu_university_subject_eval", []),
+                    ("FROM edu_dual_class", []),
+                    ("FROM edu_university_employment", []),
+                    ("FROM edu_college_specialty_group g", []),
+                ]
+            )
+        )
+
+        result = tools.school_major_profile(
+            "杭州电子科技大学",
+            "计算机科学与技术",
+            province="浙江",
+            subject_type="综合",
+            year=2025,
+        )
+
+        self.assertEqual(result["status"], "partial")
+        self.assertIn("招生/录取证据", result["data"]["evidence_gaps"])
+        self.assertIn("未命中该省份/科类/年份招生或录取证据", result["warnings"][0])
 
     def test_score_to_rank_requires_province_subject_type_and_score(self):
         tools = RetrievalTools(FakeClient([]))
@@ -194,6 +446,36 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["data"]["rank_range"]["lowest_rank"], 45200)
         self.assertIn("位次优先于分数", result["scope_notes"][0])
+
+    def test_score_to_rank_accepts_legacy_science_label_when_matched_row_is_physics(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    (
+                        "FROM edu_score_rank",
+                        [
+                            {
+                                "province_id": "51",
+                                "year": "2025",
+                                "subject_type": "物理",
+                                "score": "600",
+                                "same_count": "637",
+                                "highest_rank": "22825",
+                                "lowest_rank": "23461",
+                            }
+                        ],
+                    )
+                ]
+            )
+        )
+
+        result = tools.score_to_rank(province="四川", subject_type="理科", score=600, year=2025)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["normalized_slots"]["subject_type"], "理科")
+        self.assertEqual(result["normalized_slots"]["matched_subject_type"], "物理")
+        self.assertIn("subject_type IN ('理科', '物理')", tools.client.queries[-1])
+        self.assertIn("已按本地一分一段表命中的科类", result["warnings"][0])
 
     def test_rank_to_school_match_requires_rank_or_score(self):
         tools = RetrievalTools(FakeClient([]))
@@ -344,6 +626,39 @@ class RetrievalToolsTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "not_found")
         self.assertIn("本地库未命中", result["warnings"][0])
+
+    def test_rank_to_school_match_dual_class_filter_uses_dual_class_flags(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    (
+                        "FROM edu_score_rank",
+                        [
+                            {
+                                "province_id": "33",
+                                "year": "2025",
+                                "subject_type": "综合",
+                                "score": "620",
+                                "same_count": "1000",
+                                "highest_rank": "30000",
+                                "lowest_rank": "31000",
+                            }
+                        ],
+                    ),
+                    ("FROM edu_school_admission_stats a", []),
+                ]
+            )
+        )
+
+        tools.rank_to_school_match(
+            province="浙江",
+            subject_type="综合",
+            score=620,
+            year=2025,
+            school_level_filter="双一流",
+        )
+
+        self.assertIn("u.is_dual_class = 1", tools.client.queries[-1])
 
     def test_rank_to_major_match_requires_major_and_rank_or_score(self):
         tools = RetrievalTools(FakeClient([]))
@@ -600,6 +915,25 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(result["data"]["departments"][0]["majors"][0]["major_code"], "080901")
         self.assertIn("d.dept_name LIKE '%计算机%'", tools.client.queries[-1])
 
+    def test_school_department_major_list_uses_internal_school_id_only(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_major", [MAJOR]),
+                    ("FROM edu_university_department d", []),
+                ]
+            )
+        )
+
+        tools.school_department_major_list("杭州电子科技大学", major_text="计算机科学与技术")
+
+        department_query = tools.client.queries[-1]
+        self.assertIn("d.school_id = '10124'", department_query)
+        self.assertIn("dm.school_id = '10124'", department_query)
+        self.assertNotIn("d.school_id = '10336'", department_query)
+        self.assertNotIn("dm.school_id = '10336'", department_query)
+
     def test_plan_history_reads_qjjh_plan_records(self):
         tools = RetrievalTools(
             FakeClient(
@@ -630,6 +964,28 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(result["data"]["records"][0]["plan_count"], "80")
         self.assertIn("school_id = '10336'", tools.client.queries[-1])
         self.assertIn("special_id = '080901'", tools.client.queries[-1])
+
+    def test_admission_history_returns_not_found_when_no_records(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_major", [MAJOR]),
+                ]
+            )
+        )
+
+        result = tools.admission_history(
+            school_text="杭州电子科技大学",
+            major_text="计算机科学与技术",
+            province="浙江",
+            subject_type="综合",
+            years=[2025, 2024],
+        )
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["data"]["records"], [])
+        self.assertIn("本地专业录取历史", result["data_gaps"])
 
     def test_employment_summary_returns_school_level_scope(self):
         tools = RetrievalTools(
@@ -873,6 +1229,15 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertIn("正式可报条件判定", result["data_gaps"])
         self.assertIn("不能直接判断可报", result["scope_notes"][0])
 
+    def test_civil_service_mapping_returns_not_found_when_major_cannot_be_resolved(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_major", [])]))
+
+        result = tools.civil_service_mapping("星际航道规划与管理", year=2026)
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["data"]["selected_major"], {})
+        self.assertIn("本地库未命中专业实体", result["warnings"][0])
+
     def test_policy_rule_lookup_returns_official_policy_gap(self):
         tools = RetrievalTools(FakeClient([("FROM edu_university", [SCHOOL])]))
 
@@ -962,6 +1327,38 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertIn("不等于该专业一定可报", result["scope_notes"][0])
         self.assertIn("rysxai_civil_service_roles", result["source_tables"])
 
+    def test_civil_service_role_search_matches_major_code_without_catalog_suffix(self):
+        law_major = {**MAJOR, "code": "030101K", "special_name": "法学"}
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_major", [law_major]),
+                    (
+                        "FROM civil_service_major_role_candidates c",
+                        [
+                            {
+                                "role_id": "100",
+                                "year": "2026",
+                                "department_name": "示例部门",
+                                "job_name": "法务岗位",
+                                "position_code": "100110001002",
+                                "province": "北京",
+                                "major_code": "030101",
+                                "major_name": "K法学",
+                                "profession_text": "030101K法学",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.civil_service_role_search("法学", year=2026)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["roles"][0]["job_name"], "法务岗位")
+        self.assertIn("c.major_code IN ('030101K', '030101')", tools.client.queries[-1])
+
     def test_data_gap_detection_lists_school_major_gaps(self):
         tools = RetrievalTools(FakeClient([]))
 
@@ -973,6 +1370,16 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertIn("校专业级薪资分布", result["data"]["missing_items"])
         self.assertIn("转专业政策", result["data"]["missing_items"])
+
+    def test_data_gap_detection_rejects_unknown_question_type(self):
+        tools = RetrievalTools(FakeClient([]))
+
+        result = tools.data_gap_detection(question_type="unknown_question_type")
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["question_type"])
+        self.assertIn("school_major_profile", result["data"]["supported_question_types"])
+        self.assertIn("未知问题类型", result["warnings"][0])
 
 
     def test_cli_runs_when_script_path_is_used(self):

@@ -34,9 +34,9 @@ from scripts.local_retrieval_mvp import (
     MysqlCliClient,
     build_dual_class_sql,
     build_latest_employment_sql,
-    build_school_major_sql,
     build_subject_eval_sql,
     resolve_major_sql,
+    resolve_school_alias_candidates_sql,
     resolve_school_sql,
     sql_quote,
 )
@@ -96,8 +96,8 @@ _SOURCE_TRACE_REGISTRY = {
     # it tells the future agent what kind of evidence a tool can surface before
     # the agent decides whether a claim is safe to write in natural language.
     "school_lookup": {
-        "source_tables": ["edu_university"],
-        "scope_notes": ["学校实体解析来自本地学校基础表。"],
+        "source_tables": ["edu_university", "entity_aliases"],
+        "scope_notes": ["学校实体解析来自本地学校基础表和已确认别名表。"],
         "reliability": "A",
     },
     "major_lookup": {
@@ -129,7 +129,12 @@ _SOURCE_TRACE_REGISTRY = {
         "source_tables": [
             "edu_university",
             "edu_major",
-            "edu_school_major",
+            "edu_university_department",
+            "edu_university_department_major",
+            "edu_school_admission_stats",
+            "edu_qjjh_plan",
+            "edu_university_plan_special_group",
+            "edu_university_plan_special",
             "edu_university_subject_eval",
             "edu_dual_class",
             "edu_university_employment",
@@ -325,6 +330,30 @@ class RetrievalTools:
         if missing:
             return _needs("school_lookup", {"school_text": school_text}, missing)
 
+        alias_rows = self.client.query(resolve_school_alias_candidates_sql(school_text, limit=max(int(limit), 20)))
+        if len(alias_rows) > 1:
+            return tool_result(
+                "school_lookup",
+                "needs_clarification",
+                {"school_text": school_text, "limit": limit},
+                normalized_slots={"school_alias": school_text},
+                data={"selected_school": {}, "candidates": alias_rows},
+                scope_notes=["学校简称命中多个已确认别名候选，不能自动选择其中一个。"],
+                needs_clarification=["school_text"],
+                source_tables=["edu_university", "entity_aliases"],
+                warnings=["学校简称存在歧义，请提供学校全称、省份或城市后再查询。"],
+            )
+        if len(alias_rows) == 1:
+            return tool_result(
+                "school_lookup",
+                "ok",
+                {"school_text": school_text, "limit": limit},
+                normalized_slots={"school_name": alias_rows[0].get("name"), "school_id": alias_rows[0].get("school_id")},
+                data={"selected_school": alias_rows[0], "candidates": alias_rows},
+                scope_notes=["学校实体解析来自 edu_university 和 entity_aliases；短简称只使用已确认别名，不直接猜测学校。"],
+                source_tables=["edu_university", "entity_aliases"],
+            )
+
         rows = self.client.query(resolve_school_sql(school_text, limit=limit))
         if not rows:
             return tool_result(
@@ -332,7 +361,7 @@ class RetrievalTools:
                 "not_found",
                 {"school_text": school_text, "limit": limit},
                 data={"selected_school": {}, "candidates": []},
-                source_tables=["edu_university"],
+                source_tables=["edu_university", "entity_aliases"],
                 warnings=["本地库未命中学校实体，不能猜测学校。"],
             )
 
@@ -342,8 +371,8 @@ class RetrievalTools:
             {"school_text": school_text, "limit": limit},
             normalized_slots={"school_name": rows[0].get("name"), "school_id": rows[0].get("school_id")},
             data={"selected_school": rows[0], "candidates": rows},
-            scope_notes=["学校实体解析来自 edu_university；第一版尚未启用人工确认别名表。"],
-            source_tables=["edu_university"],
+            scope_notes=["学校实体解析来自 edu_university 和 entity_aliases；短简称只使用已确认别名，不直接猜测学校。"],
+            source_tables=["edu_university", "entity_aliases"],
         )
 
     def major_lookup(self, major_text: str, limit: int = 5) -> dict[str, Any]:
@@ -463,14 +492,17 @@ class RetrievalTools:
 
         school = school_result["data"]["selected_school"]
         rows = self.client.query(_school_major_list_sql(school, major_category, limit))
+        status = "ok" if rows else "not_found"
         return tool_result(
             "school_major_list",
-            "ok",
+            status,
             {"school_text": school_text, "major_category": major_category, "limit": limit},
             normalized_slots=school_result["normalized_slots"],
             data={"school": school, "majors": rows},
             scope_notes=["学校开设专业不等于某省当年招生专业；带省份年份时应查询招生计划。"],
+            data_gaps=[] if rows else ["学校开设专业记录"],
             source_tables=["edu_university", "edu_school_major", "edu_major"],
+            warnings=[] if rows else ["本地库未命中该学校开设专业记录。"],
         )
 
     def major_school_list(
@@ -488,9 +520,10 @@ class RetrievalTools:
 
         major = major_result["data"]["selected_major"]
         rows = self.client.query(_major_school_list_sql(major, province_filter, school_level_filter, limit))
+        status = "ok" if rows else "not_found"
         return tool_result(
             "major_school_list",
-            "ok",
+            status,
             {
                 "major_text": major_text,
                 "province_filter": province_filter,
@@ -500,10 +533,12 @@ class RetrievalTools:
             normalized_slots=major_result["normalized_slots"],
             data={"major": major, "schools": rows},
             scope_notes=["开设学校列表是学校专业关系口径，不等于某省当年有招生计划。"],
+            data_gaps=[] if rows else ["开设该专业的学校记录"],
             source_tables=_merge_source_tables(
                 major_result["source_tables"],
                 ["edu_school_major", "edu_university"],
             ),
+            warnings=[] if rows else ["本地库未命中开设该专业的学校记录。"],
         )
 
     def school_major_profile(
@@ -529,20 +564,31 @@ class RetrievalTools:
             return school_result | {"tool_name": "school_major_profile"}
 
         major_result = self.major_lookup(major_text, limit=1)
-        if major_result["status"] != "ok":
+        if major_result["status"] not in {"ok", "not_found"}:
             return major_result | {"tool_name": "school_major_profile"}
 
         school = school_result["data"]["selected_school"]
-        major = major_result["data"]["selected_major"]
-        school_major = _first_row(self.client.query(build_school_major_sql(school, major)))
-        subject_evals = self.client.query(build_subject_eval_sql(school, major))
-        dual_class = self.client.query(build_dual_class_sql(school, major))
+        major_resolved = major_result["status"] == "ok"
+        major = major_result["data"]["selected_major"] if major_resolved else _raw_admission_major(major_text)
+        school_major = None
+        school_major_evidence = [
+            row
+            for sql in _school_major_evidence_sqls(school, major, province, subject_type, year)
+            for row in self.client.query(sql)
+        ]
+        evidence_summary = _school_major_evidence_summary(school_major, school_major_evidence)
+        subject_evals = self.client.query(build_subject_eval_sql(school, major)) if major_resolved else []
+        dual_class = self.client.query(build_dual_class_sql(school, major)) if major_resolved else []
         employment = _first_row(self.client.query(build_latest_employment_sql(school)))
         groups = self.client.query(_specialty_group_sql(school, major, province, subject_type, year))
 
-        available = ["学校基础信息", "专业基础信息"]
-        if school_major:
-            available.append("学校-专业开设关系")
+        available = ["学校基础信息"]
+        if major_resolved:
+            available.append("专业基础信息")
+        else:
+            available.append("招生专业原始名称")
+        if school_major_evidence:
+            available.append("学校-专业证据链")
         if subject_evals:
             available.append("教育部学科评估")
         if employment:
@@ -550,9 +596,10 @@ class RetrievalTools:
         if groups:
             available.append("专业组样本")
 
+        has_context = bool(province or subject_type or year)
         return tool_result(
             "school_major_profile",
-            "ok" if school_major else "partial",
+            _school_major_profile_status(evidence_summary, has_context, major_resolved),
             {
                 "school_text": school_text,
                 "major_text": major_text,
@@ -562,7 +609,7 @@ class RetrievalTools:
             },
             normalized_slots={
                 **school_result["normalized_slots"],
-                **major_result["normalized_slots"],
+                **(major_result["normalized_slots"] if major_resolved else {"major_name": major_text, "major_resolution": "raw_admission_name"}),
                 "province": province,
                 "subject_type": subject_type,
                 "year": year,
@@ -571,6 +618,9 @@ class RetrievalTools:
                 "school": school,
                 "major": major,
                 "school_major": school_major or {},
+                "school_major_evidence": school_major_evidence,
+                "evidence_summary": evidence_summary,
+                "evidence_gaps": _school_major_evidence_gaps(evidence_summary),
                 "subject_evals": subject_evals,
                 "dual_class": dual_class,
                 "employment": employment or {},
@@ -585,14 +635,19 @@ class RetrievalTools:
             data_gaps=SCHOOL_MAJOR_PROFILE_GAPS,
             source_tables=[
                 *_merge_source_tables(school_result["source_tables"], major_result["source_tables"]),
-                "edu_school_major",
+                "edu_university_department",
+                "edu_university_department_major",
+                "edu_school_admission_stats",
+                "edu_qjjh_plan",
+                "edu_university_plan_special_group",
+                "edu_university_plan_special",
                 "edu_university_subject_eval",
                 "edu_dual_class",
                 "edu_university_employment",
                 "edu_college_specialty_group",
                 "edu_specialty_group_major",
             ],
-            warnings=[] if school_major else ["本地库未命中明确学校-专业开设关系，不能直接认定已开设。"],
+            warnings=_school_major_profile_warnings(evidence_summary, has_context, major_resolved),
         )
 
     def score_to_rank(
@@ -627,23 +682,36 @@ class RetrievalTools:
                 warnings=["暂不认识该省份名称，请提供省份标准名称或 province_id。"],
             )
 
-        rows = self.client.query(_score_to_rank_sql(province_id, subject_type, score, year))
+        subject_type_candidates = _subject_type_candidates(subject_type)
+        rows = self.client.query(_score_to_rank_sql(province_id, subject_type_candidates, score, year))
         if not rows:
             return tool_result(
                 "score_to_rank",
                 "not_found",
                 {"province": province, "subject_type": subject_type, "score": score, "year": year},
-                normalized_slots={"province_id": province_id},
+                normalized_slots={"province_id": province_id, "subject_type_candidates": subject_type_candidates},
                 source_tables=["edu_score_rank"],
                 warnings=["本地库未命中对应一分一段记录。"],
             )
 
         row = rows[0]
+        matched_subject_type = _text(row.get("subject_type"))
+        warnings = []
+        if matched_subject_type and matched_subject_type != _text(subject_type):
+            warnings.append(
+                f"输入科类为“{subject_type}”，已按本地一分一段表命中的科类“{matched_subject_type}”返回；请结合该省当年新高考/传统文理科口径复核。"
+            )
         return tool_result(
             "score_to_rank",
             "ok",
             {"province": province, "subject_type": subject_type, "score": score, "year": year},
-            normalized_slots={"province": province, "province_id": province_id, "subject_type": subject_type, "year": row.get("year")},
+            normalized_slots={
+                "province": province,
+                "province_id": province_id,
+                "subject_type": subject_type,
+                "matched_subject_type": matched_subject_type or subject_type,
+                "year": row.get("year"),
+            },
             data={
                 "score": _as_int(row.get("score")),
                 "same_count": _as_int(row.get("same_count")),
@@ -654,6 +722,7 @@ class RetrievalTools:
             },
             scope_notes=["位次优先于分数；分数转位次只在同省、同科类、同年份内有效。"],
             source_tables=["edu_score_rank"],
+            warnings=warnings,
         )
 
     def rank_to_school_match(
@@ -725,6 +794,7 @@ class RetrievalTools:
             if score_rank_result["status"] != "ok":
                 return score_rank_result | {"tool_name": "rank_to_school_match"}
             applicant_rank = _as_int(score_rank_result["data"]["rank_range"].get("lowest_rank"))
+            subject_type = score_rank_result.get("normalized_slots", {}).get("matched_subject_type") or subject_type
             rank_source = "score_to_rank"
 
         if applicant_rank is None:
@@ -902,6 +972,7 @@ class RetrievalTools:
             if score_rank_result["status"] != "ok":
                 return score_rank_result | {"tool_name": "rank_to_major_match"}
             applicant_rank = _as_int(score_rank_result["data"]["rank_range"].get("lowest_rank"))
+            subject_type = score_rank_result.get("normalized_slots", {}).get("matched_subject_type") or subject_type
             rank_source = "score_to_rank"
 
         if applicant_rank is None:
@@ -1798,6 +1869,8 @@ class RetrievalTools:
         role_result = self.civil_service_role_search(major_text, year=year, province=province, limit=limit)
         if role_result["status"] in {"needs_clarification", "error"}:
             return role_result | {"tool_name": "civil_service_mapping"}
+        if role_result["status"] == "not_found" and not role_result.get("data", {}).get("major"):
+            return role_result | {"tool_name": "civil_service_mapping"}
 
         return tool_result(
             "civil_service_mapping",
@@ -1901,9 +1974,11 @@ class RetrievalTools:
 
         rows = self.client.query(_admission_history_sql(school, major, province, subject_type, years, limit))
         missing_context = [slot for slot, value in {"province": province, "subject_type": subject_type}.items() if not value]
+        status = "not_found" if not rows else "partial" if missing_context else "ok"
+        data_gaps = [] if rows else ["本地专业录取历史" if major_text else "本地录取历史"]
         return tool_result(
             "admission_history",
-            "partial" if missing_context else "ok",
+            status,
             {
                 "school_text": school_text,
                 "major_text": major_text,
@@ -1918,13 +1993,20 @@ class RetrievalTools:
                 "录取历史必须带年份、省份、科类、批次理解；跨年份比较优先看位次。",
                 "历史录取不代表未来录取保证。",
             ],
+            data_gaps=data_gaps,
             needs_clarification=missing_context,
             source_tables=_merge_source_tables(
                 school_result["source_tables"] if school_text else [],
                 major_result["source_tables"] if major_text else [],
                 ["edu_school_admission_stats"],
             ),
-            warnings=["缺少省份或科类时，只能作为宽泛历史样本。"] if missing_context else [],
+            warnings=(
+                ["本地库未命中符合条件的录取历史记录。"]
+                if not rows
+                else ["缺少省份或科类时，只能作为宽泛历史样本。"]
+                if missing_context
+                else []
+            ),
         )
 
     def major_market_reference(self, major_text: str, sample_limit: int = 10) -> dict[str, Any]:
@@ -2074,6 +2156,19 @@ class RetrievalTools:
                 "language_limit": "外语语种限制",
             },
         }
+        if question_type not in missing_by_type:
+            supported_types = sorted(missing_by_type)
+            return tool_result(
+                "data_gap_detection",
+                "needs_clarification",
+                {"question_type": question_type, "available_fields": available_fields or []},
+                data={"supported_question_types": supported_types},
+                needs_clarification=["question_type"],
+                warnings=["未知问题类型，不能判断数据缺口。"],
+                scope_notes=["缺口检测只支持已注册的问题类型。"],
+                source_tables=[],
+            )
+
         expected = missing_by_type.get(question_type, {})
         missing_items = [label for key, label in expected.items() if key not in available]
 
@@ -2103,6 +2198,103 @@ def _missing_slots(values: dict[str, Any]) -> list[str]:
 
 def _first_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     return rows[0] if rows else None
+
+
+def _raw_admission_major(major_text: str) -> dict[str, Any]:
+    return {
+        "special_id": "",
+        "code": "",
+        "special_name": _text(major_text),
+        "resolution_status": "raw_admission_name",
+        "resolution_note": "未映射到 edu_major 标准专业库，按招生计划/录取历史原始专业名称继续检索。",
+    }
+
+
+def _school_major_evidence_summary(
+    school_major: dict[str, Any] | None,
+    evidence_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    source_tables = {str(row.get("source_table") or "") for row in evidence_rows}
+    source_types = {str(row.get("source_type") or "") for row in evidence_rows}
+    has_department_catalog = "edu_university_department_major" in source_tables
+    has_admission_history = "admission_history" in source_types
+    has_plan = "plan" in source_types
+    has_specialty_group = "specialty_group" in source_types
+    return {
+        "has_primary_catalog": False,
+        "has_department_catalog": has_department_catalog,
+        "has_admission_or_plan": bool(has_admission_history or has_plan or has_specialty_group),
+        "has_admission_history": has_admission_history,
+        "has_plan": has_plan,
+        "has_specialty_group": has_specialty_group,
+        "evidence_count": len(evidence_rows),
+        "source_tables": sorted(table for table in source_tables if table),
+    }
+
+
+def _school_major_profile_status(
+    evidence_summary: dict[str, Any],
+    has_context: bool,
+    major_resolved: bool,
+) -> str:
+    has_department_catalog = bool(evidence_summary.get("has_department_catalog"))
+    has_admission_or_plan = bool(evidence_summary.get("has_admission_or_plan"))
+    has_any_evidence = bool(evidence_summary.get("evidence_count"))
+    if has_department_catalog and (not has_context or has_admission_or_plan):
+        return "ok"
+    if has_any_evidence:
+        return "partial"
+    return "partial" if major_resolved else "not_found"
+
+
+def _school_major_evidence_gaps(evidence_summary: dict[str, Any]) -> list[str]:
+    gaps = []
+    if not evidence_summary.get("has_department_catalog"):
+        gaps.append("院系专业目录证据")
+    if not evidence_summary.get("has_admission_or_plan"):
+        gaps.append("招生/录取证据")
+    return gaps
+
+
+def _school_major_profile_warnings(
+    evidence_summary: dict[str, Any],
+    has_context: bool,
+    major_resolved: bool,
+) -> list[str]:
+    warnings = []
+    if not major_resolved:
+        warnings.append("未映射到标准专业库，已按招生计划/录取历史原始专业名称检索。")
+    if evidence_summary.get("has_department_catalog") and has_context and not evidence_summary.get("has_admission_or_plan"):
+        warnings.append("已命中院系专业目录证据，但未命中该省份/科类/年份招生或录取证据。")
+    elif not evidence_summary.get("has_department_catalog") and evidence_summary.get("has_admission_or_plan"):
+        warnings.append("未命中院系专业目录证据；仅命中招生/录取/专业组证据，回答时需标注来源口径。")
+    elif not evidence_summary.get("has_department_catalog"):
+        warnings.append("本地库未命中院系专业目录证据，不能直接认定已开设。")
+    return warnings
+
+
+def _major_query_name(major: dict[str, Any]) -> str:
+    return _text(major.get("special_name") or major.get("major_name"))
+
+
+def _major_query_code(major: dict[str, Any]) -> str:
+    return _text(major.get("code") or major.get("special_id") or major.get("major_code"))
+
+
+def _major_query_clause(code_column: str, name_column: str, major: dict[str, Any]) -> str:
+    code = _major_query_code(major)
+    name = _major_query_name(major)
+    clauses = []
+    if code:
+        clauses.append(f"{code_column} = {sql_quote(code)}")
+    if name:
+        clauses.extend(
+            [
+                f"{name_column} = {sql_quote(name)}",
+                f"{name_column} LIKE {sql_quote(f'%{name}%')}",
+            ]
+        )
+    return "(" + " OR ".join(clauses or ["1 = 0"]) + ")"
 
 
 def _dual_class_by_school_sql(school: dict[str, Any]) -> str:
@@ -2154,14 +2346,12 @@ def _major_school_list_sql(
     limit: int,
 ) -> str:
     province_clause = f"AND u.province_name = {sql_quote(province_filter)}" if province_filter else ""
-    level_clause = ""
-    if school_level_filter in {"211", "双一流", "985"}:
-        column = {"211": "u.is211", "985": "u.is985", "双一流": "u.is_dual_class"}[school_level_filter]
-        level_clause = f"AND {column} = 1"
+    level_clause = f"AND {_school_level_filter_clause(school_level_filter)}" if school_level_filter else ""
     return f"""
 SELECT sm.school_id, sm.school_name, u.province_name, u.city_name, u.is211, u.is985,
        u.is_dual_class, sm.major_code, sm.major_name, sm.nation_first_class,
-       sm.xueke_rank_score, sm.ruanke_level
+       sm.xueke_rank_score, sm.ruanke_level, u.level_name AS school_level_name,
+       u.type_name AS school_type_name, sm.level_name AS major_level_name
 FROM edu_school_major sm
 LEFT JOIN edu_university u ON u.code = CAST(sm.school_id AS CHAR) AND u.name = sm.school_name
 WHERE (sm.deleted IS NULL OR sm.deleted = 0)
@@ -2171,6 +2361,135 @@ WHERE (sm.deleted IS NULL OR sm.deleted = 0)
 ORDER BY u.is985 DESC, u.is211 DESC, u.is_dual_class DESC, sm.school_name
 LIMIT {int(limit)}
 """.strip()
+
+
+def _school_major_evidence_sqls(
+    school: dict[str, Any],
+    major: dict[str, Any],
+    province: str | None,
+    subject_type: str | None,
+    year: int | None,
+) -> list[str]:
+    school_id = _text(school.get("school_id"))
+    school_code = _text(school.get("code"))
+    school_name = _text(school.get("name"))
+    province_id = _province_id(province) or _text(province)
+
+    admission_clauses = [
+        "(a.deleted IS NULL OR a.deleted = b'0')",
+        f"a.school_name = {sql_quote(school_name)}",
+        _major_query_clause("a.major_code", "a.major_name", major),
+    ]
+    if school_code:
+        admission_clauses.append(f"CAST(a.school_id AS CHAR) = {sql_quote(school_code)}")
+    if province:
+        admission_clauses.append(f"a.province_name = {sql_quote(province)}")
+    if subject_type:
+        admission_clauses.append(f"a.subject_type = {sql_quote(subject_type)}")
+    if year:
+        admission_clauses.append(f"a.year = {int(year)}")
+
+    qjjh_clauses = [
+        "(q.deleted IS NULL OR q.deleted = 0)",
+        f"q.school_id = {sql_quote(school_id)}",
+        _major_query_clause("q.special_id", "q.special_name", major),
+    ]
+    if province_id:
+        qjjh_clauses.append(f"q.province_id = {sql_quote(province_id)}")
+    if year:
+        qjjh_clauses.append(f"q.year = {int(year)}")
+
+    plan_special_clauses = [
+        "(pc.deleted IS NULL OR pc.deleted = 0)",
+        "(pg.deleted IS NULL OR pg.deleted = 0)",
+        "(ps.deleted IS NULL OR ps.deleted = 0)",
+        f"CAST(pc.school_id AS CHAR) = {sql_quote(school_id)}",
+        _major_query_clause("ps.special_id", "ps.special_name", major),
+    ]
+    if province_id:
+        plan_special_clauses.append(f"pc.province_id = {sql_quote(province_id)}")
+    if year:
+        plan_special_clauses.append(f"pc.year = {int(year)}")
+
+    specialty_group_clauses = [
+        "(g.deleted IS NULL OR g.deleted = b'0')",
+        "(gm.deleted IS NULL OR gm.deleted = b'0')",
+        f"g.school_id = {sql_quote(school_id)}",
+        _major_query_clause("gm.special_code", "gm.special_name", major),
+    ]
+    if province_id:
+        specialty_group_clauses.append(f"g.province = {sql_quote(province_id)}")
+    if subject_type:
+        specialty_group_clauses.append(f"g.group_type = {sql_quote(subject_type)}")
+    if year:
+        specialty_group_clauses.append(f"g.year = {int(year)}")
+
+    return [
+        f"""
+/* school_major_evidence_chain_for_school_major_profile */
+SELECT 'catalog' AS source_type, 'edu_university_department_major' AS source_table,
+       '院系专业目录证据' AS source_label, dm.school_id, {sql_quote(school_name)} AS school_name,
+       dm.major_code, dm.major_name, NULL AS year, NULL AS province, NULL AS subject_type,
+       'medium' AS confidence, d.dept_name AS detail, NULL AS plan_count, NULL AS score, NULL AS rank_value
+FROM edu_university_department d
+JOIN edu_university_department_major dm ON dm.dept_id = d.id
+WHERE (d.deleted IS NULL OR d.deleted = b'0')
+  AND (dm.deleted IS NULL OR dm.deleted = b'0')
+  AND d.school_id = {sql_quote(school_id)}
+  AND dm.school_id = {sql_quote(school_id)}
+  AND {_major_query_clause("dm.major_code", "dm.major_name", major)}
+ORDER BY d.dept_name, dm.sort_order, dm.major_code
+LIMIT 10
+""".strip(),
+        f"""
+SELECT 'admission_history' AS source_type, 'edu_school_admission_stats' AS source_table,
+       '录取历史证据' AS source_label, CAST(a.school_id AS CHAR) AS school_id,
+       a.school_name, a.major_code, a.major_name, a.year, a.province_name AS province,
+       a.subject_type, 'high' AS confidence, a.batch AS detail, a.plan_count,
+       a.stable_score AS score, a.stable_rank AS rank_value
+FROM edu_school_admission_stats a
+WHERE {' AND '.join(admission_clauses)}
+ORDER BY a.year DESC, a.province_name, a.subject_type, a.stable_rank
+LIMIT 10
+""".strip(),
+        f"""
+SELECT 'plan' AS source_type, 'edu_qjjh_plan' AS source_table,
+       '招生计划证据' AS source_label, q.school_id, {sql_quote(school_name)} AS school_name,
+       q.special_id AS major_code, q.special_name AS major_name, q.year,
+       CAST(q.province_id AS CHAR) AS province, CAST(q.category_type AS CHAR) AS subject_type,
+       'medium' AS confidence, q.group_name AS detail, q.plan_count, NULL AS score, NULL AS rank_value
+FROM edu_qjjh_plan q
+WHERE {' AND '.join(qjjh_clauses)}
+ORDER BY q.year DESC, q.province_id, q.group_name
+LIMIT 10
+""".strip(),
+        f"""
+SELECT 'plan' AS source_type, 'edu_university_plan_special' AS source_table,
+       '招生计划证据' AS source_label, CAST(pc.school_id AS CHAR) AS school_id,
+       {sql_quote(school_name)} AS school_name, ps.special_id AS major_code, ps.special_name AS major_name,
+       pc.year, CAST(pc.province_id AS CHAR) AS province, CAST(pc.type_id AS CHAR) AS subject_type,
+       'medium' AS confidence, pg.group_name AS detail, ps.plan_count, NULL AS score, NULL AS rank_value
+FROM edu_university_plan_config pc
+JOIN edu_university_plan_special_group pg ON pg.config_id = pc.id
+JOIN edu_university_plan_special ps ON ps.group_id = pg.id
+WHERE {' AND '.join(plan_special_clauses)}
+ORDER BY pc.year DESC, pc.province_id, pc.type_id, pg.group_id
+LIMIT 10
+""".strip(),
+        f"""
+SELECT 'specialty_group' AS source_type, 'edu_specialty_group_major' AS source_table,
+       '专业组证据' AS source_label, g.school_id, {sql_quote(school_name)} AS school_name,
+       gm.special_code AS major_code, gm.special_name AS major_name, g.year,
+       g.province, g.group_type AS subject_type, 'medium' AS confidence,
+       CONCAT(g.group_code, ' ', g.group_name) AS detail, gm.plan_count,
+       gm.min_score AS score, gm.min_rank AS rank_value
+FROM edu_college_specialty_group g
+JOIN edu_specialty_group_major gm ON gm.group_id = g.id
+WHERE {' AND '.join(specialty_group_clauses)}
+ORDER BY g.year DESC, g.province, g.group_code
+LIMIT 10
+""".strip(),
+    ]
 
 
 def _specialty_group_lookup_sql(
@@ -2267,12 +2586,12 @@ def _school_department_major_list_sql(
     major: dict[str, Any] | None,
     limit: int,
 ) -> str:
-    school_code = _text(school.get("code"))
     school_id = _text(school.get("school_id"))
     clauses = [
         "(d.deleted IS NULL OR d.deleted = b'0')",
         "(dm.deleted IS NULL OR dm.deleted = b'0')",
-        f"(d.school_id = {sql_quote(school_code)} OR d.school_id = {sql_quote(school_id)})",
+        f"d.school_id = {sql_quote(school_id)}",
+        f"dm.school_id = {sql_quote(school_id)}",
     ]
     if department_text:
         clauses.append(f"d.dept_name LIKE {sql_quote(f'%{department_text}%')}")
@@ -2418,19 +2737,65 @@ def _major_code_or_name_clause(code_column: str, name_column: str, major: dict[s
     return "(" + " OR ".join(clauses or ["1 = 0"]) + ")"
 
 
-def _score_to_rank_sql(province_id: str, subject_type: str, score: int | float | str, year: int | None) -> str:
+def _subject_type_candidates(subject_type: str | None) -> list[str]:
+    """Return conservative subject-type aliases for score-rank lookup.
+
+    Some provinces have moved from traditional 文科/理科 to 历史/物理 in recent
+    score-rank tables, while users may still describe themselves with the old
+    labels.  We keep the user's wording first and add only the well-established
+    paired label as a fallback; the response warns whenever the matched row uses
+    a different subject type from the input.
+    """
+
+    primary = _text(subject_type)
+    alias_map = {
+        "理科": ["物理"],
+        "物理": ["理科"],
+        "文科": ["历史"],
+        "历史": ["文科"],
+    }
+    return _distinct_texts([primary] + alias_map.get(primary, []))
+
+
+def _score_to_rank_sql(province_id: str, subject_types: list[str], score: int | float | str, year: int | None) -> str:
     year_clause = f"AND year = {int(year)}" if year else ""
+    subject_values = ", ".join(sql_quote(value) for value in subject_types if value)
+    subject_clause = f"AND subject_type IN ({subject_values})" if subject_values else "AND 1 = 0"
+    subject_order = "0"
+    if subject_types:
+        subject_order = "CASE " + " ".join(
+            f"WHEN subject_type = {sql_quote(value)} THEN {index}" for index, value in enumerate(subject_types)
+        ) + " ELSE 99 END"
     return f"""
 SELECT province_id, year, subject_type, score, same_count, highest_rank, lowest_rank
 FROM edu_score_rank
 WHERE deleted = 0
   AND province_id = {sql_quote(province_id)}
-  AND subject_type = {sql_quote(subject_type)}
+  {subject_clause}
   AND score = {int(float(score))}
   {year_clause}
-ORDER BY CAST(year AS UNSIGNED) DESC
+ORDER BY {subject_order}, CAST(year AS UNSIGNED) DESC
 LIMIT 1
 """.strip()
+
+
+def _school_level_filter_clause(school_level_filter: str) -> str:
+    """Build a school-level filter without losing structured school flags.
+
+    `school_level_filter` is about school level labels such as "本科" and
+    "专科".  Development/type labels from `edu_university.school_type` are a
+    different dimension and should not participate in this filter.
+    """
+
+    pattern = f"%{school_level_filter}%"
+    text_clause = f"u.level_name LIKE {sql_quote(pattern)}"
+    if "双一流" in school_level_filter or "一流" in school_level_filter:
+        return f"({text_clause} OR u.is_dual_class = 1 OR u.dual_class = '1')"
+    if "985" in school_level_filter:
+        return f"({text_clause} OR u.is985 = 1)"
+    if "211" in school_level_filter:
+        return f"({text_clause} OR u.is211 = 1)"
+    return text_clause
 
 
 def _rank_to_school_match_sql(
@@ -2471,10 +2836,7 @@ def _rank_to_school_match_sql(
         if regions:
             clauses.append(f"u.province_name IN ({regions})")
     if school_level_filter:
-        pattern = f"%{school_level_filter}%"
-        clauses.append(
-            f"(u.level_name LIKE {sql_quote(pattern)} OR u.school_type LIKE {sql_quote(pattern)})"
-        )
+        clauses.append(_school_level_filter_clause(school_level_filter))
 
     subject_order = "1"
     if subject_type:
@@ -2550,10 +2912,7 @@ def _rank_to_major_match_sql(
         if regions:
             clauses.append(f"u.province_name IN ({regions})")
     if school_level_filter:
-        pattern = f"%{school_level_filter}%"
-        clauses.append(
-            f"(u.level_name LIKE {sql_quote(pattern)} OR u.school_type LIKE {sql_quote(pattern)})"
-        )
+        clauses.append(_school_level_filter_clause(school_level_filter))
 
     subject_order = "1"
     if subject_type:
@@ -2751,6 +3110,7 @@ def _civil_service_role_search_sql(
 ) -> str:
     year_clause = f"AND r.year = {int(year)}" if year else ""
     province_clause = f"AND r.province = {sql_quote(province)}" if province else ""
+    code_values = ", ".join(sql_quote(value) for value in _catalog_major_code_variants(major.get("code"))) or "''"
     return f"""
 SELECT r.role_id, r.year, r.department_name, r.sub_department, r.job_name,
        r.position_code, r.exam_type, r.plan_num, r.apply_num, r.ratio,
@@ -2758,12 +3118,29 @@ SELECT r.role_id, r.year, r.department_name, r.sub_department, r.job_name,
        c.major_code, c.major_name, c.profession_text
 FROM civil_service_major_role_candidates c
 JOIN rysxai_civil_service_roles r ON r.role_id = c.role_id
-WHERE c.major_code = {sql_quote(major.get('code'))}
+WHERE c.major_code IN ({code_values})
   {year_clause}
   {province_clause}
 ORDER BY r.year DESC, r.ratio ASC, r.role_id
 LIMIT {int(limit)}
 """.strip()
+
+
+def _catalog_major_code_variants(code: Any) -> list[str]:
+    """Return exact and suffix-stripped undergraduate catalog codes.
+
+    The civil-service candidate table was produced from free-form岗位专业文本.
+    During extraction, catalog suffixes such as K/T/TK may appear attached to
+    the Chinese major name instead of the `major_code` column.  Querying both
+    the exact official code and the numeric base code recovers those samples
+    while still staying inside the same catalog-code family.
+    """
+
+    code_text = _text(code).upper()
+    if not code_text:
+        return []
+    stripped = code_text.rstrip("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    return _distinct_texts([code_text, stripped])
 
 
 def _split_text(value: Any) -> list[str]:

@@ -104,7 +104,7 @@ data_gap_detection
 
 已经具备的核心能力：
 
-- 能解析学校实体，并返回规范学校与候选学校。
+- 能解析学校实体，并返回规范学校与候选学校；已接入数据库确认别名表 `entity_aliases`，例如“杭电”会优先命中“杭州电子科技大学”。
 - 能解析专业实体，并返回规范专业与候选专业；已接入数据库确认别名表 `entity_aliases`，例如“计科”会优先命中“计算机科学与技术”。
 - 能查询学校画像、专业画像、学校开设专业、专业开设学校。
 - 能查询学校 + 专业组合画像，并在校专业级就业、薪资、转专业、分流等数据不足时返回 `data_gaps`。
@@ -124,12 +124,13 @@ data_gap_detection
 - 已完成 `scripts/retrieval_tools.py` 工具层。
 - 已完成 `scripts/retrieval_function_registry.py` function schema 注册层和 dispatcher。
 - 已完成 `scripts/run_retrieval_smoke_cases.py` 本地批量烟测脚本。
+- 已完成 27 个正式工具的真实库 smoke 矩阵：`data/retrieval_smoke_cases.json` 展开后为 305 个用例，并且会自动校验是否覆盖注册表里的全部工具名。
 - 已修复 MySQL CLI 长文本换行解析问题，避免专业介绍字段里的换行被拆成假候选记录。
 - 已修复录取历史表和学校基础表的学校关联键问题：`edu_school_admission_stats.school_id` 应按 `edu_university.code + name` 关联，而不是按 `edu_university.school_id` 关联。
 
 | 阶段 | 工具名 | 优先级 | 主要解决的问题 | 当前数据支持 | 实现状态 | 落地说明 |
 |---|---|---:|---|---|---|---|
-| 1 | `school_lookup` | P0 | 解析学校实体 | A | 已完成 | 已接入 `retrieval_tools.py`、`retrieval_function_registry.py`、烟测用例 |
+| 1 | `school_lookup` | P0 | 解析学校实体 | A | 已完成 | 已接入 `retrieval_tools.py`、`retrieval_function_registry.py`、烟测用例；常用学校简称已接入 `entity_aliases` |
 | 1 | `major_lookup` | P0 | 解析专业实体 | A | 已完成 | 已接入工具层、function schema、烟测用例；常用专业简称已迁入 `entity_aliases`，短简称不再走危险模糊匹配 |
 | 1 | `school_profile` | P0 | 给学校查概况 | A | 已完成 | 返回学校基础、双一流、学科评估、学校级就业升学 |
 | 1 | `major_profile` | P0 | 给专业查概况 | A/B | 已完成 | 返回专业通用信息；明确不代表某校某专业就业 |
@@ -160,6 +161,7 @@ data_gap_detection
 未完成能力摘要：
 
 - 计划表里的 function call 外壳已经全部进入注册表，后续 agent 可以统一调用。
+- 工具结构化可调用性已经通过全量真实库 smoke：305 个用例结构通过、0 个结构失败、0 个质量提示。
 - `major_streaming_policy_lookup`、`policy_rule_lookup`、`civil_service_mapping` 仍没有官方证据链或正式判定规则，只能返回保守结果和缺口；后续重点是联网补证据、人工复核和结构化入库。
 
 ## 分阶段实现路线

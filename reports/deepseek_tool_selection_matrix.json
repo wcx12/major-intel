@@ -1,0 +1,72 @@
+﻿[
+  {
+    "prompt": "你好，你能做什么？",
+    "tool_call_count": 0,
+    "tool_names": [],
+    "unique_tool_names": [],
+    "answer_preview": "你好，我是 Major Intel 的高考志愿填报小导师，主要帮你解决志愿填报中的信息判断和决策问题。具体来说，我能做以下几类事情：\n\n学校与专业查询\n\n- 根据学校名称、简称或代码，查学校的基本画像，包括办学层次、双一流学科、学科评估结果、学校级就业和升学概况。\n- 根据专业名称或代码，查专业的通用画像，包括学科门类、修业年限、学位类型和通用就业方向。\n- 查某所学校开设了哪些专业，或者某专业在哪些学校有开设记录。\n\n分数与位次转换\n\n- 把你的高考分数按省份、科类、年份转换成全省位次区间，这是后续冲稳保判断的基础。\n\n冲稳保推荐\n\n- 根据你的省份、科类、分数或位次，结合历年录取数据，推荐"
+  },
+  {
+    "prompt": "杭电计算机怎么样？",
+    "tool_call_count": 9,
+    "tool_names": [
+      "school_profile",
+      "major_profile",
+      "school_major_profile",
+      "major_market_reference",
+      "civil_service_role_search",
+      "school_lookup",
+      "school_profile",
+      "school_major_profile",
+      "school_major_list"
+    ],
+    "unique_tool_names": [
+      "civil_service_role_search",
+      "major_market_reference",
+      "major_profile",
+      "school_lookup",
+      "school_major_list",
+      "school_major_profile",
+      "school_profile"
+    ],
+    "answer_preview": "数据已经比较充分了。下面给出完整分析。\n\n杭电计算机科学与技术：综合评估\n\n一、总体判断\n\n杭州电子科技大学的计算机科学与技术是一个\"非双一流高校中的强势选择\"。它不是985、不是211、也不是双一流建设高校，但在计算机这个方向上，学科实力和就业区位优势叠加，性价比相当高。适合分数够不上中上流211但又不甘心读普通一本计算机的考生。\n\n二、学科实力：硬指标过关\n\n第四轮学科评估中，杭电计算机科学与技术获评B+。这个成绩在非双一流高校中属于第一梯队。同校的控制科学与工程、电子科学与技术也是B+，说明学校在电子信息大类有集群优势，不是单点突出。\n\n对比参照：不少211高校的计算机在B或B-档，杭电"
+  },
+  {
+    "prompt": "广东物理580分，想学计算机，有哪些稳一点的学校？",
+    "tool_call_count": 22,
+    "tool_names": [
+      "score_to_rank",
+      "major_lookup",
+      "rank_to_major_match",
+      "major_market_reference",
+      "civil_service_role_search",
+      "rank_to_school_match",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile",
+      "school_major_profile"
+    ],
+    "unique_tool_names": [
+      "civil_service_role_search",
+      "major_lookup",
+      "major_market_reference",
+      "rank_to_major_match",
+      "rank_to_school_match",
+      "school_major_profile",
+      "score_to_rank"
+    ],
+    "answer_preview": "工具调用轮次过多，建议先把问题收窄到一个学校、专业、分数或位次场景。"
+  }
+]
