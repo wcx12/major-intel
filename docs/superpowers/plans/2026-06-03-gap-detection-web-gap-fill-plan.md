@@ -1,266 +1,179 @@
-# Gap Detection And Web Gap Fill Implementation Plan
+# 高考志愿 Agent 缺口检测与网页补全实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **给执行 Agent 的要求：** 实施本计划时，按任务逐项推进。每完成一个任务，都要先运行对应测试，再进入下一项。不要把网页搜索结果的摘要直接当作事实，最终答案只能引用已抓取、已校验、可追溯的证据。
 
-**Goal:** Build a deterministic gap-detection and gap-filling workflow so local retrieval gaps are identified structurally, optionally filled through official web evidence, and never answered from rejected or third-party-only search snippets.
+**目标：** 建立一套确定性的缺口识别和缺口补全流程。高考志愿 Agent 先使用本地数据库工具回答；如果本地结果为空、部分缺失或证据不足，则结构化识别缺口，再通过官方网页证据进行有限轮次补全。对于仍无法确认的信息，明确返回未补全缺口，不编造结论。
 
-**Architecture:** Keep existing retrieval tools as the local fact layer. Upgrade `data_gap_detection` into the deterministic gap registry interface, add `web_gap_fill` as the multi-round gap-filling orchestrator, keep `web_evidence_fetch` as the single-round search/fetch/snippet extractor, and update the DeepSeek agent to call `web_gap_fill` before lower-level web tools.
+**适用场景：** 专业开设院校、学校开设专业、录取历史、招生章程、选科要求、就业去向、培养方案等高考志愿相关问答。
 
-**Tech Stack:** Python, pytest, SearXNG JSON API, existing `RetrievalTools` envelope, existing function-call registry, DeepSeek function-call agent.
-
----
-
-## Current Problems
-
-The current implementation can detect some gaps through `status`, `data_gaps`, and empty core lists, but the behavior is incomplete:
-
-- `data_gap_detection` only covers a small set of question types and currently returns `ok` even when `missing_items` is non-empty.
-- Several tools have implicit core fields but no shared registry that says which fields determine whether the tool actually found useful data.
-- The agent fallback currently treats local `not_found` as a reason to call a web tool once, instead of planning multiple searches around a specific gap.
-- `web_evidence_fetch` can fetch official page text, but it does not know what gap it is trying to fill.
-- Third-party search results must never become facts unless verified through trusted sources.
-
-## Target Flow
-
-```text
-Local retrieval tool result
--> Detect status/core-field/data_gaps signals
--> Build structured gap candidates
--> Call data_gap_detection for canonical gap definitions
--> Filter to resolvable_by_web=true gaps
--> web_gap_fill runs bounded multi-round search/fetch/evaluation
--> Return filled_items, accepted_evidence, unfilled_gaps
--> Agent answers only from filled_items and accepted_evidence
-```
-
-## Files
-
-- Modify: `scripts/retrieval_tools.py`
-  - Add core-field helpers.
-  - Upgrade `data_gap_detection`.
-  - Add `web_gap_fill`.
-  - Add CLI parser and dispatcher entry for `web_gap_fill`.
-- Modify: `scripts/retrieval_function_registry.py`
-  - Register `web_gap_fill`.
-  - Extend schema tests.
-- Modify: `scripts/deepseek_retrieval_agent.py`
-  - Prefer `web_gap_fill` over `web_evidence_fetch` and `web_evidence_search`.
-  - Ensure final answer uses accepted evidence only.
-- Create: `tests/test_gap_detection_registry.py`
-  - Tests for core fields, available field inference, and structured gap items.
-- Create: `tests/test_web_gap_fill.py`
-  - Tests for bounded multi-round gap filling.
-- Modify: `tests/test_retrieval_tools.py`
-  - Update `data_gap_detection` status expectations.
-- Modify: `tests/test_retrieval_function_registry.py`
-  - Add `web_gap_fill` registry expectations.
-- Modify: `tests/test_deepseek_retrieval_agent.py`
-  - Add fallback priority test.
-- Create: `tests/function_calls/web_gap_fill/README.md`
-  - Function-call README for the new tool.
-- Modify: `.env.example`
-  - Add gap-fill limits if needed.
+**技术栈：** Python、pytest、现有 `RetrievalTools` 返回 envelope、现有 function-call registry、DeepSeek function-call agent、SearXNG JSON API、`web_evidence_fetch`。
 
 ---
 
-## Task 1: Add Core Result Field Registry
+## 一、当前问题
 
-**Files:**
-- Modify: `scripts/retrieval_tools.py`
-- Create: `tests/test_gap_detection_registry.py`
+当前工具链已经具备本地数据库检索能力，也新增了网页证据搜索和抓取能力，但二者之间还缺少一个严谨的“缺口判断层”。
 
-- [ ] **Step 1: Write failing tests for core-field detection**
+主要问题如下：
 
-Add tests that prove empty core fields are detected independently from the tool status.
+- 本地工具返回 `not_found` 或核心列表为空时，Agent 目前只能做较粗糙的一次性网页搜索。
+- `data_gap_detection` 现在更像静态槽位检查，没有充分利用各工具真实返回结果。
+- 多个工具都有“核心结果字段”，例如 `major_school_list.data.schools`、`school_major_list.data.majors`、`admission_history.data.records`，但还没有统一注册表描述这些字段。
+- 网页工具 `web_evidence_fetch` 能搜索和抓网页，但不知道自己正在补哪个缺口，因此无法稳定判断“是否已经补上”。
+- 第三方搜索结果可能有参考价值，但不能直接变成事实；必须由官网、考试院、阳光高考等可信来源确认。
+- 用户问法经常带有地区、层级、年份、科类等限制，本地工具缺少数据时，Agent 需要知道到底缺的是“关系数据”“地区字段”“历史分数”还是“官方规则”。
 
-```python
-from scripts.retrieval_tools import (
-    _core_field_empty,
-    _infer_available_fields,
-)
+---
 
+## 二、目标流程
 
-def test_major_school_list_empty_schools_is_core_gap():
-    result = {
-        "tool_name": "major_school_list",
-        "status": "ok",
-        "data": {"major": {"special_name": "人工智能"}, "schools": []},
-        "normalized_slots": {"major_name": "人工智能", "major_code": "080717T"},
-        "data_gaps": [],
-    }
-
-    assert _core_field_empty("major_school_list", result) is True
-
-
-def test_major_school_list_major_basic_is_available_when_major_exists():
-    result = {
-        "tool_name": "major_school_list",
-        "status": "not_found",
-        "data": {"major": {"special_name": "人工智能"}, "schools": []},
-        "normalized_slots": {"major_name": "人工智能", "major_code": "080717T"},
-    }
-
-    fields = _infer_available_fields("major_school_list", result)
-
-    assert "major_basic" in fields
-    assert "major_code" in fields
-    assert "major_school_relation" not in fields
-```
-
-- [ ] **Step 2: Run tests and verify failure**
-
-Run:
-
-```powershell
-python -m pytest tests/test_gap_detection_registry.py -q
-```
-
-Expected failure:
+目标流程是：先本地，后缺口检测，再官方网页补全，最后带证据回答。
 
 ```text
-ImportError or AttributeError for _core_field_empty / _infer_available_fields
+用户问题
+  -> Agent 选择本地检索工具
+  -> 本地工具返回结构化结果
+  -> 检测 status、核心字段、data_gaps、normalized_slots
+  -> 生成结构化 gap_items
+  -> 筛选 resolvable_by_web=true 的缺口
+  -> 调用 web_gap_fill 做有限轮次搜索、抓取、证据评估
+  -> 返回 filled_items、accepted_evidence、unfilled_gaps
+  -> Agent 只基于本地结果和 accepted_evidence 回答
 ```
 
-- [ ] **Step 3: Implement core-field registry and helpers**
+回答规则：
 
-Add helper definitions to `scripts/retrieval_tools.py`.
+- 本地数据库命中且核心字段完整：直接回答，可附带数据来源为本地库。
+- 本地数据库未命中但网页官方证据补上：回答时说明“本地库未命中，以下根据官方网页证据补充”。
+- 只搜到第三方结果，未抓取到官方证据：不能当作已确认事实，只能说明“未能从可信来源确认”。
+- 达到搜索轮次或抓取上限仍未补上：返回明确的未补全缺口。
+
+---
+
+## 三、涉及文件
+
+需要修改的主要文件：
+
+- `scripts/retrieval_tools.py`
+  - 增加核心字段注册表。
+  - 升级 `data_gap_detection`。
+  - 增加 `_detect_tool_result_gaps`。
+  - 新增 `web_gap_fill`。
+  - 增加 CLI parser 和 dispatcher。
+
+- `scripts/retrieval_function_registry.py`
+  - 注册 `web_gap_fill`。
+  - 补充 schema 测试。
+
+- `scripts/deepseek_retrieval_agent.py`
+  - 调整工具 fallback 顺序。
+  - 优先调用 `web_gap_fill`，再考虑底层 `web_evidence_fetch`。
+  - 最终答案只使用 accepted evidence。
+
+- `tests/test_gap_detection_registry.py`
+  - 新增缺口检测注册表测试。
+
+- `tests/test_web_gap_fill.py`
+  - 新增网页缺口补全测试。
+
+- `tests/test_retrieval_tools.py`
+  - 更新 `data_gap_detection` 的状态语义测试。
+
+- `tests/test_retrieval_function_registry.py`
+  - 增加 `web_gap_fill` 注册测试。
+
+- `tests/test_deepseek_retrieval_agent.py`
+  - 增加 Agent fallback 优先级测试。
+
+- `tests/function_calls/web_gap_fill/README.md`
+  - 新增工具说明、测试范围、测试结果和改进建议。
+
+- `.env.example`
+  - 如需要，补充网页补全轮次和抓取上限配置。
+
+---
+
+## 四、核心设计
+
+### 1. 核心结果字段注册表
+
+不同工具的“查到数据”不能只看 `status=ok`。应该明确每个工具的核心字段。
+
+示例：
 
 ```python
 TOOL_CORE_FIELDS = {
-    "school_lookup": ["data.selected_school"],
-    "major_lookup": ["data.selected_major"],
     "school_major_list": ["data.majors"],
     "major_school_list": ["data.schools"],
     "admission_history": ["data.records"],
-    "plan_history": ["data.records", "data.plans"],
-    "subject_requirement_lookup": ["data.requirements"],
-    "policy_rule_lookup": ["data.rules"],
-    "fee_and_campus_lookup": ["data.fee_items"],
-    "web_evidence_fetch": ["data.evidence_pages"],
+    "rank_to_school_match": ["data.matches"],
+    "rank_to_major_match": ["data.matches"],
 }
-
-
-def _path_value(data: dict[str, Any], path: str) -> Any:
-    current: Any = data
-    for part in path.split("."):
-        if not isinstance(current, dict):
-            return None
-        current = current.get(part)
-    return current
-
-
-def _has_non_empty_value(value: Any) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, (list, tuple, set, dict)):
-        return bool(value)
-    if isinstance(value, str):
-        return bool(value.strip())
-    return True
-
-
-def _core_field_empty(tool_name: str, result: dict[str, Any]) -> bool:
-    paths = TOOL_CORE_FIELDS.get(tool_name)
-    if not paths:
-        return False
-    return not any(_has_non_empty_value(_path_value(result, path)) for path in paths)
 ```
 
-Add first-pass available-field inference:
+判断原则：
 
-```python
-def _infer_available_fields(tool_name: str, result: dict[str, Any]) -> list[str]:
-    fields: set[str] = set()
-    data = result.get("data") if isinstance(result.get("data"), dict) else {}
-    normalized = result.get("normalized_slots") if isinstance(result.get("normalized_slots"), dict) else {}
+- 核心字段不存在：视为缺口。
+- 核心字段是空列表：视为缺口。
+- 核心字段是空字典：视为缺口。
+- 核心字段是空字符串：视为缺口。
+- 核心字段非空：视为该维度有结果。
 
-    if normalized.get("major_code"):
-        fields.add("major_code")
-    if normalized.get("major_name"):
-        fields.add("major_basic")
-    if normalized.get("school_name"):
-        fields.add("school_basic")
-    if normalized.get("province_filter") or normalized.get("province"):
-        fields.add("province")
-    if normalized.get("school_level_filter"):
-        fields.add("school_level")
+### 2. 结构化 gap_items
 
-    if tool_name == "major_school_list":
-        if _has_non_empty_value(data.get("major")):
-            fields.add("major_basic")
-        if _has_non_empty_value(data.get("schools")):
-            fields.add("major_school_relation")
-    if tool_name == "school_major_list":
-        if _has_non_empty_value(data.get("school")):
-            fields.add("school_basic")
-        if _has_non_empty_value(data.get("majors")):
-            fields.add("school_major_catalog")
-    if tool_name == "admission_history" and _has_non_empty_value(data.get("records")):
-        fields.add("admission_history")
+`data_gap_detection` 不应只返回字符串列表。它应该返回结构化缺口对象，供 Agent 和后续工具稳定消费。
 
-    return sorted(fields)
+建议结构：
+
+```json
+{
+  "gap_key": "major_school_relation",
+  "label": "专业开设院校关系",
+  "question_type": "major_school_list",
+  "missing_fields": ["major_school_relation"],
+  "resolvable_by_web": true,
+  "preferred_source_types": ["chsi", "exam_authority", "official"],
+  "evidence_requirements": [
+    "school_name",
+    "major_name_or_code",
+    "undergraduate_level",
+    "source_url",
+    "evidence_snippet"
+  ],
+  "normalized_slots": {
+    "major_name": "人工智能",
+    "major_code": "080717T",
+    "province_filter": "上海",
+    "school_level_filter": "本科"
+  }
+}
 ```
 
-- [ ] **Step 4: Run tests and verify pass**
+状态语义：
 
-Run:
+- `ok`：已知问题类型，且没有发现缺口。
+- `partial`：已知问题类型，发现部分缺口。
+- `not_found`：核心查询对象不存在，或核心结果为空且没有其它可用信息。
+- `needs_clarification`：缺少必要槽位，或者 `question_type` 未知。
 
-```powershell
-python -m pytest tests/test_gap_detection_registry.py -q
+未知问题类型必须返回：
+
+```json
+{
+  "status": "needs_clarification",
+  "data": {
+    "supported_question_types": ["..."]
+  }
+}
 ```
 
-Expected:
+不能再返回 `ok + missing_items=[]`。
 
-```text
-2 passed
-```
+### 3. GAP_REGISTRY
 
----
+建议增加确定性的缺口注册表。
 
-## Task 2: Upgrade data_gap_detection To Structured Gap Items
-
-**Files:**
-- Modify: `scripts/retrieval_tools.py`
-- Modify: `tests/test_retrieval_tools.py`
-- Modify: `tests/function_calls/data_gap_detection/README.md`
-
-- [ ] **Step 1: Write failing tests for partial status and gap_items**
-
-Add or update tests in `tests/test_retrieval_tools.py`.
-
-```python
-def test_data_gap_detection_returns_partial_with_structured_gap_items():
-    tools = RetrievalTools(FakeClient([]))
-
-    result = tools.data_gap_detection(
-        question_type="major_school_list",
-        available_fields=["major_basic", "major_code", "province", "school_level"],
-    )
-
-    assert result["status"] == "partial"
-    assert "missing_items" in result["data"]
-    assert result["data"]["gap_items"][0]["gap_key"] == "major_school_relation"
-    assert result["data"]["gap_items"][0]["resolvable_by_web"] is True
-    assert "official" in result["data"]["gap_items"][0]["preferred_source_types"]
-```
-
-- [ ] **Step 2: Run tests and verify failure**
-
-Run:
-
-```powershell
-python -m pytest tests/test_retrieval_tools.py::RetrievalToolsTests::test_data_gap_detection_returns_partial_with_structured_gap_items -q
-```
-
-Expected failure:
-
-```text
-AssertionError: 'ok' != 'partial' or missing gap_items
-```
-
-- [ ] **Step 3: Add gap registry**
-
-Implement a deterministic registry in `scripts/retrieval_tools.py`.
+第一版至少覆盖这些缺口：
 
 ```python
 GAP_REGISTRY = {
@@ -284,7 +197,12 @@ GAP_REGISTRY = {
         "required_fields": ["school_major_catalog"],
         "resolvable_by_web": True,
         "preferred_source_types": ["official", "chsi"],
-        "evidence_requirements": ["school_name", "major_name_or_code", "source_url", "evidence_snippet"],
+        "evidence_requirements": [
+            "school_name",
+            "major_name_or_code",
+            "source_url",
+            "evidence_snippet",
+        ],
     },
     "admission_history": {
         "label": "专业录取历史",
@@ -292,869 +210,581 @@ GAP_REGISTRY = {
         "required_fields": ["admission_history"],
         "resolvable_by_web": True,
         "preferred_source_types": ["exam_authority", "official"],
-        "evidence_requirements": ["school_name", "major_name", "province", "year", "score_or_rank", "source_url"],
+        "evidence_requirements": [
+            "school_name",
+            "major_name",
+            "province",
+            "year",
+            "score_or_rank",
+            "source_url",
+        ],
     },
     "official_admission_rule": {
-        "label": "官方招生章程原文",
+        "label": "官方招生规则原文",
         "question_types": ["policy_rule_lookup"],
         "required_fields": ["official_admission_rule"],
         "resolvable_by_web": True,
         "preferred_source_types": ["official"],
-        "evidence_requirements": ["school_name", "policy_text", "source_url", "evidence_snippet"],
+        "evidence_requirements": [
+            "school_name",
+            "policy_text",
+            "source_url",
+            "evidence_snippet",
+        ],
     },
     "streaming_ratio": {
         "label": "真实分流比例",
         "question_types": ["major_streaming_policy_lookup"],
         "required_fields": ["streaming_ratio"],
         "resolvable_by_web": False,
-        "non_resolvable_reason": "真实分流比例通常不是稳定公开数据，不能通过网页自动核验。",
+        "non_resolvable_reason": "真实分流比例通常不是稳定公开数据，不能通过网页自动确认。",
         "preferred_source_types": [],
         "evidence_requirements": [],
     },
 }
 ```
 
-- [ ] **Step 4: Make data_gap_detection return structured partial**
-
-Update `data_gap_detection`:
-
-```python
-def _gap_items_for_question_type(question_type: str, available_fields: set[str]) -> list[dict[str, Any]]:
-    items = []
-    for gap_key, definition in GAP_REGISTRY.items():
-        if question_type not in definition.get("question_types", []):
-            continue
-        required_fields = set(definition.get("required_fields", []))
-        if required_fields & available_fields:
-            continue
-        items.append({"gap_key": gap_key, **definition})
-    return items
-```
-
-Status rule:
-
-```python
-status = "ok" if not gap_items else "partial"
-```
-
-Keep `data.missing_items`:
-
-```python
-missing_items = [item["label"] for item in gap_items]
-```
-
-- [ ] **Step 5: Update README**
-
-Update `tests/function_calls/data_gap_detection/README.md` to say:
-
-```text
-known type + missing_items non-empty -> partial
-known type + no missing_items -> ok
-unknown type -> needs_clarification
-```
-
-- [ ] **Step 6: Run tests**
-
-Run:
-
-```powershell
-python -m pytest tests/test_retrieval_tools.py -q
-```
-
-Expected:
-
-```text
-all retrieval tool tests pass
-```
+后续可以逐步把 27 个工具都纳入这个注册表，但第一版不要一次性追求全覆盖。先覆盖高频、风险最高的志愿问答链路。
 
 ---
 
-## Task 3: Detect Gaps From Tool Results
+## 五、实施任务
 
-**Files:**
-- Modify: `scripts/retrieval_tools.py`
-- Modify: `tests/test_gap_detection_registry.py`
+## Task 1：增加核心结果字段注册表
 
-- [ ] **Step 1: Write failing tests**
+**目标：** 用统一方式判断工具是否真的查到了核心结果。
 
-```python
-from scripts.retrieval_tools import _detect_tool_result_gaps
+**修改文件：**
 
+- `scripts/retrieval_tools.py`
+- `tests/test_gap_detection_registry.py`
 
-def test_detect_tool_result_gaps_from_not_found_major_school_list():
-    result = {
-        "tool_name": "major_school_list",
-        "status": "not_found",
-        "data": {"major": {"special_name": "人工智能"}, "schools": []},
-        "normalized_slots": {
-            "major_name": "人工智能",
-            "major_code": "080717T",
-            "province_filter": "上海",
-            "school_level_filter": "本科",
-        },
-        "data_gaps": ["开设该专业的学校记录"],
-    }
+**步骤：**
 
-    gaps = _detect_tool_result_gaps("major_school_list", result)
+- [ ] 新增 `TOOL_CORE_FIELDS`。
+- [ ] 新增 `_get_path_value(payload, path)`，支持 `data.schools` 这种点路径。
+- [ ] 新增 `_core_field_empty(payload, field_path)`。
+- [ ] 新增 `_infer_available_fields(tool_name, result)`。
+- [ ] 写测试覆盖：
+  - `major_school_list.data.schools=[]` 判定为空。
+  - `school_major_list.data.majors=[]` 判定为空。
+  - `admission_history.data.records=[]` 判定为空。
+  - 非空列表被识别为可用字段。
 
-    assert gaps[0]["gap_key"] == "major_school_relation"
-    assert gaps[0]["trigger"] in {"status_not_found", "core_result_empty"}
-    assert gaps[0]["resolvable_by_web"] is True
-```
-
-- [ ] **Step 2: Run test and verify failure**
-
-Run:
-
-```powershell
-python -m pytest tests/test_gap_detection_registry.py::test_detect_tool_result_gaps_from_not_found_major_school_list -q
-```
-
-Expected:
-
-```text
-ImportError or AttributeError for _detect_tool_result_gaps
-```
-
-- [ ] **Step 3: Implement gap detection helper**
-
-```python
-TOOL_TO_QUESTION_TYPE = {
-    "major_school_list": "major_school_list",
-    "school_major_list": "school_major_list",
-    "admission_history": "admission_history",
-    "policy_rule_lookup": "policy_rule_lookup",
-    "major_streaming_policy_lookup": "major_streaming_policy_lookup",
-    "web_evidence_fetch": "web_evidence_fetch",
-}
-
-
-def _detect_tool_result_gaps(tool_name: str, result: dict[str, Any]) -> list[dict[str, Any]]:
-    status = str(result.get("status") or "")
-    if status in {"needs_clarification", "error", "skipped"}:
-        return []
-
-    core_empty = _core_field_empty(tool_name, result)
-    has_data_gaps = bool(result.get("data_gaps"))
-    if status not in {"not_found", "partial"} and not core_empty and not has_data_gaps:
-        return []
-
-    question_type = TOOL_TO_QUESTION_TYPE.get(tool_name, tool_name)
-    available_fields = set(_infer_available_fields(tool_name, result))
-    gap_items = _gap_items_for_question_type(question_type, available_fields)
-
-    trigger = "status_not_found" if status == "not_found" else "partial_data_gap"
-    if core_empty:
-        trigger = "core_result_empty"
-
-    normalized_slots = result.get("normalized_slots") if isinstance(result.get("normalized_slots"), dict) else {}
-    return [
-        {
-            "source_tool": tool_name,
-            "question_type": question_type,
-            "trigger": trigger,
-            "status": status,
-            "raw_data_gaps": result.get("data_gaps") or [],
-            "normalized_slots": normalized_slots,
-            **item,
-        }
-        for item in gap_items
-    ]
-```
-
-- [ ] **Step 4: Run tests**
-
-Run:
+**建议测试命令：**
 
 ```powershell
 python -m pytest tests/test_gap_detection_registry.py -q
 ```
 
-Expected:
+**验收标准：**
 
-```text
-all gap detection registry tests pass
-```
+- 空核心字段不会被误判为完整数据。
+- 可用字段推断不依赖自然语言字符串。
 
 ---
 
-## Task 4: Register web_gap_fill Schema And CLI
+## Task 2：升级 data_gap_detection
 
-**Files:**
-- Modify: `scripts/retrieval_function_registry.py`
-- Modify: `scripts/retrieval_tools.py`
-- Modify: `tests/test_retrieval_function_registry.py`
-- Create: `tests/function_calls/web_gap_fill/README.md`
+**目标：** 让 `data_gap_detection` 从静态槽位检查升级为结构化缺口判断接口。
 
-- [ ] **Step 1: Write failing registry test**
+**修改文件：**
 
-Add `web_gap_fill` to `EXPECTED_FUNCTION_NAMES`.
+- `scripts/retrieval_tools.py`
+- `tests/test_retrieval_tools.py`
+- `tests/function_calls/data_gap_detection/README.md`
 
-Add fake method:
+**步骤：**
+
+- [ ] 引入 `GAP_REGISTRY`。
+- [ ] 让 `data_gap_detection` 返回 `gap_items`。
+- [ ] 对已知问题类型：
+  - 无缺口返回 `ok`。
+  - 有缺口返回 `partial`。
+- [ ] 对未知问题类型：
+  - 返回 `needs_clarification`。
+  - 返回 `supported_question_types`。
+- [ ] 保留 `missing_items`，但它只作为兼容字段。
+- [ ] README 更新状态语义。
+
+**关键测试：**
 
 ```python
-def web_gap_fill(
-    self,
-    question,
-    gap_type,
-    normalized_slots=None,
-    gap_keys=None,
-    max_rounds=3,
-    max_queries=8,
-    max_pages=20,
-    source_policy="official_only",
-):
-    self.calls.append(
-        (
-            "web_gap_fill",
-            {
-                "question": question,
-                "gap_type": gap_type,
-                "normalized_slots": normalized_slots,
-                "gap_keys": gap_keys,
-                "max_rounds": max_rounds,
-                "max_queries": max_queries,
-                "max_pages": max_pages,
-                "source_policy": source_policy,
-            },
-        )
+def test_data_gap_detection_returns_partial_with_gap_items():
+    result = tools.data_gap_detection(
+        question_type="major_school_list",
+        available_fields=["major_basic", "major_code", "province", "school_level"],
     )
-    return tool_result("web_gap_fill", "not_found", {"question": question, "gap_type": gap_type})
+
+    assert result["status"] == "partial"
+    assert result["data"]["gap_items"][0]["gap_key"] == "major_school_relation"
+    assert result["data"]["gap_items"][0]["resolvable_by_web"] is True
 ```
 
-- [ ] **Step 2: Run registry test and verify failure**
+**验收标准：**
 
-Run:
+- `unknown_question_type` 不再返回 `ok`。
+- `missing_items` 非空时不再返回 `ok`。
+- 下游 Agent 可以直接读取 `gap_items`。
+
+---
+
+## Task 3：从工具结果中自动识别缺口
+
+**目标：** 不只依赖用户显式调用 `data_gap_detection`，而是能根据每个工具返回结果自动生成缺口。
+
+**修改文件：**
+
+- `scripts/retrieval_tools.py`
+- `tests/test_gap_detection_registry.py`
+
+**步骤：**
+
+- [ ] 新增 `_detect_tool_result_gaps(tool_name, result)`。
+- [ ] 读取工具 `status`。
+- [ ] 检查 `TOOL_CORE_FIELDS`。
+- [ ] 合并工具返回的 `data_gaps`。
+- [ ] 合并 `normalized_slots`。
+- [ ] 给每个缺口标记触发原因：
+  - `status_not_found`
+  - `core_result_empty`
+  - `explicit_data_gaps`
+  - `missing_required_slot`
+- [ ] 返回可直接传给 `web_gap_fill` 的结构化 gap 对象。
+
+**示例：**
+
+```python
+gaps = _detect_tool_result_gaps("major_school_list", result)
+
+assert gaps[0]["gap_key"] == "major_school_relation"
+assert gaps[0]["normalized_slots"]["major_name"] == "人工智能"
+assert gaps[0]["normalized_slots"]["province_filter"] == "上海"
+```
+
+**验收标准：**
+
+- `major_school_list` 查询上海本科人工智能为空时，能识别为 `major_school_relation` 缺口。
+- 结果中保留原始工具名、触发原因、标准化槽位。
+
+---
+
+## Task 4：注册 web_gap_fill 工具
+
+**目标：** 增加一个面向 Agent 的高级网页补全工具，不让 Agent 直接拼多轮搜索策略。
+
+**修改文件：**
+
+- `scripts/retrieval_tools.py`
+- `scripts/retrieval_function_registry.py`
+- `tests/test_retrieval_function_registry.py`
+
+**工具职责：**
+
+`web_gap_fill` 接收一个或多个结构化缺口，内部调用搜索、抓取和证据评估逻辑，输出已补全项和未补全项。
+
+**建议 schema：**
+
+```json
+{
+  "name": "web_gap_fill",
+  "description": "基于可信网页证据补全本地数据库未命中的高考志愿信息缺口。",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "gap_items": {
+        "type": "array",
+        "items": {"type": "object"}
+      },
+      "question": {"type": "string"},
+      "max_rounds": {"type": "integer", "default": 3},
+      "max_fetches_per_round": {"type": "integer", "default": 5},
+      "source_policy": {
+        "type": "string",
+        "enum": ["official_only", "trusted_first", "any"],
+        "default": "official_only"
+      }
+    },
+    "required": ["gap_items"]
+  }
+}
+```
+
+**返回结构：**
+
+```json
+{
+  "status": "ok | partial | not_found | needs_clarification | error",
+  "data": {
+    "filled_items": [],
+    "accepted_evidence": [],
+    "rejected_evidence": [],
+    "unfilled_gaps": [],
+    "rounds": []
+  }
+}
+```
+
+**验收标准：**
+
+- registry 中能看到 `web_gap_fill`。
+- CLI 可以直接运行该工具。
+- schema 中包含 `gap_items`、`max_rounds`、`source_policy`。
+
+---
+
+## Task 5：实现 major_school_relation 查询规划
+
+**目标：** 对“某地区哪些院校开设某专业”这类问题，生成更稳定的搜索查询。
+
+**修改文件：**
+
+- `scripts/retrieval_tools.py`
+- `tests/test_web_gap_fill.py`
+
+**输入示例：**
+
+```json
+{
+  "gap_key": "major_school_relation",
+  "normalized_slots": {
+    "major_name": "人工智能",
+    "major_code": "080717T",
+    "province_filter": "上海",
+    "school_level_filter": "本科"
+  }
+}
+```
+
+**查询策略：**
+
+第一轮：权威来源优先。
+
+```text
+人工智能 080717T 上海 本科 开设 院校 site:gaokao.chsi.com.cn
+人工智能 上海 本科 招生专业 site:*.edu.cn
+上海 人工智能 本科 招生专业 学校
+```
+
+第二轮：候选学校扩展。
+
+```text
+上海 高校 人工智能专业 招生
+上海 本科 人工智能 专业目录
+```
+
+第三轮：逐校验证。
+
+```text
+{学校名} 人工智能 本科 招生专业
+{学校名} 080717T 招生专业
+{学校名} 本科招生专业 人工智能
+```
+
+**注意：**
+
+- 搜索结果只能提供候选，不直接成为事实。
+- 真正进入 `filled_items` 必须通过抓取页面文本并通过证据评估。
+- 如果本地库地区字段缺失，不应把“未搜到上海”直接解释为“上海没有院校开设”。
+
+**验收标准：**
+
+- 查询语句包含专业名、专业代码、地区、学校层级。
+- 能基于候选学校继续逐校验证。
+- 每轮查询有上限，避免无限搜索。
+
+---
+
+## Task 6：实现证据评估器
+
+**目标：** 判断抓取到的网页内容是否真的补上了缺口。
+
+**修改文件：**
+
+- `scripts/retrieval_tools.py`
+- `tests/test_web_gap_fill.py`
+
+**major_school_relation 的证据要求：**
+
+网页文本至少要满足：
+
+- 出现专业名或专业代码，例如 `人工智能` 或 `080717T`。
+- 能识别学校名。
+- 能判断本科层级，或来源本身是本科招生专业目录。
+- 来源类型符合策略：
+  - `official_only`：只接受学校官网、考试院、阳光高考等。
+  - `trusted_first`：优先官方，必要时保留第三方为 rejected 或参考候选。
+  - `any`：允许更宽来源，但最终答案必须标注证据等级。
+
+**评估输出：**
+
+```json
+{
+  "accepted": true,
+  "gap_key": "major_school_relation",
+  "school_name": "上海交通大学",
+  "major_name": "人工智能",
+  "major_code": "080717T",
+  "source_url": "https://...",
+  "source_type": "official",
+  "evidence_snippet": "...人工智能...",
+  "confidence": "high"
+}
+```
+
+**拒绝原因：**
+
+- `source_policy_rejected`
+- `missing_major_name`
+- `missing_school_name`
+- `wrong_level`
+- `third_party_only`
+- `fetch_failed`
+- `content_too_short`
+
+**验收标准：**
+
+- 第三方页面不会被误放入 `accepted_evidence`。
+- 官方页面中没有专业名时不会被接受。
+- 通过的证据必须包含 URL、source_type、snippet。
+
+---
+
+## Task 7：实现 web_gap_fill 主循环
+
+**目标：** 把查询规划、网页抓取和证据评估串成一个有上限的补全工具。
+
+**修改文件：**
+
+- `scripts/retrieval_tools.py`
+- `tests/test_web_gap_fill.py`
+
+**主循环逻辑：**
+
+```text
+for round_index in range(max_rounds):
+    1. 根据未补全 gap 生成搜索 query
+    2. 调用 web_evidence_fetch
+    3. 遍历 fetched_pages
+    4. 用 evidence evaluator 判断是否接受
+    5. accepted -> filled_items
+    6. rejected -> rejected_evidence
+    7. 如果 gap 已满足，移出 unfilled_gaps
+    8. 如果没有新增候选或达到上限，停止
+```
+
+**状态规则：**
+
+- 所有 gap 都补上：`ok`
+- 部分 gap 补上：`partial`
+- 一个都没补上：`not_found`
+- 输入缺少 `gap_items` 或 gap 类型未知：`needs_clarification`
+- 搜索服务异常：`error`
+
+**去重规则：**
+
+- 同一 URL 不重复抓取。
+- 同一学校 + 专业 + 来源不重复进入 `filled_items`。
+- 不同来源能相互补强，但不要重复输出相同事实。
+
+**验收标准：**
+
+- `max_rounds` 生效。
+- `max_fetches_per_round` 生效。
+- 返回 `rounds` 调试轨迹。
+- 返回 `unfilled_gaps`，不静默吞掉未解决的问题。
+
+---
+
+## Task 8：调整 Agent fallback 优先级
+
+**目标：** 让 Agent 在本地数据库缺失时优先调用高级补全工具，而不是直接调用底层搜索工具。
+
+**修改文件：**
+
+- `scripts/deepseek_retrieval_agent.py`
+- `tests/test_deepseek_retrieval_agent.py`
+
+**新优先级：**
+
+```text
+本地检索工具
+  -> _detect_tool_result_gaps
+  -> web_gap_fill
+  -> 必要时 web_evidence_fetch
+  -> 最终回答
+```
+
+**最终回答约束：**
+
+- 可以引用 `filled_items`。
+- 可以引用 `accepted_evidence`。
+- 可以说明 `unfilled_gaps`。
+- 不能把 `rejected_search_results` 或 `rejected_evidence` 写成事实。
+- 如果只有第三方线索，必须说明“未能通过可信来源确认”。
+
+**验收标准：**
+
+- 对本地 `major_school_list not_found`，Agent 会优先调用 `web_gap_fill`。
+- `web_gap_fill` 返回 `not_found` 时，Agent 不编造学校列表。
+- `web_gap_fill` 返回 `partial` 时，Agent 明确区分已确认和未确认部分。
+
+---
+
+## Task 9：文档和真实烟测
+
+**目标：** 给每个新增工具补齐中文 README，并用真实 API 做最小闭环验证。
+
+**修改文件：**
+
+- `tests/function_calls/web_gap_fill/README.md`
+- 可能修改 `tests/function_calls/README_TEMPLATE.md`
+
+**README 必须包含：**
+
+- 工具原理。
+- 输入参数。
+- 输出字段。
+- 测试范围。
+- 测试结果。
+- 已知限制。
+- 后续改进建议。
+
+**建议真实烟测问题：**
+
+```text
+人工智能专业，上海有哪些本科院校开设？
+杭州电子科技大学本科招生章程是什么？
+上海交通大学是否开设人工智能本科专业？
+华东师范大学人工智能专业是否有本科招生？
+```
+
+**建议命令：**
 
 ```powershell
+python -m pytest tests/test_gap_detection_registry.py -q
+python -m pytest tests/test_web_gap_fill.py -q
+python -m pytest tests/test_retrieval_tools.py -q
 python -m pytest tests/test_retrieval_function_registry.py -q
-```
-
-Expected failure:
-
-```text
-web_gap_fill missing from schemas
-```
-
-- [ ] **Step 3: Add schema**
-
-In `scripts/retrieval_function_registry.py`, add:
-
-```python
-"web_gap_fill": _function_schema(
-    "web_gap_fill",
-    "围绕结构化数据缺口进行多轮网页补证。只把官方或高可信来源中通过正文证据验证的结果返回为 filled_items；第三方结果只能作为候选或诊断信息。",
-    _object_schema(
-        {
-            "question": _string("用户原始问题。"),
-            "gap_type": _string("缺口所属问题类型，例如 major_school_list。"),
-            "normalized_slots": {
-                "type": "object",
-                "description": "上游工具解析出的结构化槽位。",
-                "additionalProperties": True,
-            },
-            "gap_keys": _string_array("可选，需要补证的 gap_key 列表。"),
-            "max_rounds": _integer("最多补证轮数。", minimum=1, maximum=5),
-            "max_queries": _integer("最多尝试 query 数。", minimum=1, maximum=20),
-            "max_pages": _integer("最多抓取页面数。", minimum=1, maximum=50),
-            "source_policy": _string("来源策略：official_only、official_first 或 any。"),
-        },
-        ["question", "gap_type"],
-    ),
-),
-```
-
-- [ ] **Step 4: Add stub method**
-
-In `RetrievalTools`, add a stub that validates inputs and returns not_found until Task 5 implements logic:
-
-```python
-def web_gap_fill(
-    self,
-    question: str,
-    gap_type: str,
-    normalized_slots: dict[str, Any] | None = None,
-    gap_keys: list[str] | None = None,
-    max_rounds: int = 3,
-    max_queries: int = 8,
-    max_pages: int = 20,
-    source_policy: str = "official_only",
-) -> dict[str, Any]:
-    missing = _missing_slots({"question": question, "gap_type": gap_type})
-    if missing:
-        return _needs("web_gap_fill", {"question": question, "gap_type": gap_type}, missing)
-    return tool_result(
-        "web_gap_fill",
-        "not_found",
-        {
-            "question": question,
-            "gap_type": gap_type,
-            "normalized_slots": normalized_slots or {},
-            "gap_keys": gap_keys or [],
-            "max_rounds": max_rounds,
-            "max_queries": max_queries,
-            "max_pages": max_pages,
-            "source_policy": source_policy,
-        },
-        data={
-            "filled_items": [],
-            "accepted_evidence": [],
-            "unfilled_gaps": [],
-            "diagnostics": {"queries_tried": [], "pages_fetched": 0, "rejected_results": []},
-        },
-        data_gaps=["web_gap_fill_not_implemented"],
-        source_tables=[],
-    )
-```
-
-- [ ] **Step 5: Add CLI parser and README**
-
-Add CLI arguments matching schema.
-
-Create `tests/function_calls/web_gap_fill/README.md` with principles, input/output, status semantics, tests, and known risks.
-
-- [ ] **Step 6: Run registry and directory tests**
-
-Run:
-
-```powershell
-python -m pytest tests/test_retrieval_function_registry.py tests/test_function_call_readmes.py::test_function_call_test_directories_match_registered_tools -q
-```
-
-Expected:
-
-```text
-all selected tests pass
-```
-
----
-
-## Task 5: Implement Query Planner For major_school_relation
-
-**Files:**
-- Modify: `scripts/retrieval_tools.py`
-- Create: `tests/test_web_gap_fill.py`
-
-- [ ] **Step 1: Write failing tests for query planning**
-
-```python
-from scripts.retrieval_tools import _build_gap_fill_queries
-
-
-def test_build_major_school_relation_queries_prioritize_official_sources():
-    gap = {
-        "gap_key": "major_school_relation",
-        "normalized_slots": {
-            "major_name": "人工智能",
-            "major_code": "080717T",
-            "province_filter": "上海",
-            "school_level_filter": "本科",
-        },
-    }
-
-    queries = _build_gap_fill_queries("major_school_list", [gap], candidate_schools=[])
-
-    assert queries[0]["source_policy"] == "official_only"
-    assert "site:gaokao.chsi.com.cn" in queries[0]["query"]
-    assert "人工智能" in queries[0]["query"]
-    assert "080717T" in queries[0]["query"]
-```
-
-- [ ] **Step 2: Run test and verify failure**
-
-Run:
-
-```powershell
-python -m pytest tests/test_web_gap_fill.py::test_build_major_school_relation_queries_prioritize_official_sources -q
-```
-
-Expected:
-
-```text
-ImportError or AttributeError for _build_gap_fill_queries
-```
-
-- [ ] **Step 3: Implement query builder**
-
-```python
-def _build_gap_fill_queries(
-    gap_type: str,
-    gaps: list[dict[str, Any]],
-    *,
-    candidate_schools: list[str],
-) -> list[dict[str, Any]]:
-    if gap_type != "major_school_list":
-        return []
-    slots = gaps[0].get("normalized_slots") if gaps else {}
-    major_name = _text(slots.get("major_name"))
-    major_code = _text(slots.get("major_code"))
-    province = _text(slots.get("province_filter"))
-    level = _text(slots.get("school_level_filter") or "本科")
-    base = " ".join(part for part in [major_name, major_code, level, province] if part)
-    queries = [
-        {"query": f"site:gaokao.chsi.com.cn {base}", "source_policy": "official_only"},
-        {"query": f"site:chsi.com.cn {base} 普通本科", "source_policy": "official_only"},
-        {"query": f"{province} 教育考试院 {major_name} {level} 招生计划", "source_policy": "official_only"},
-    ]
-    for school in candidate_schools[:10]:
-        queries.append({"query": f"{school} {major_name} {level} 招生专业 官网", "source_policy": "official_only"})
-    queries.append({"query": f"{province} 开设 {major_name} 专业 大学", "source_policy": "any"})
-    return queries
-```
-
-- [ ] **Step 4: Run tests**
-
-Run:
-
-```powershell
-python -m pytest tests/test_web_gap_fill.py -q
-```
-
-Expected:
-
-```text
-query planner tests pass
-```
-
----
-
-## Task 6: Implement Evidence Evaluator For major_school_relation
-
-**Files:**
-- Modify: `scripts/retrieval_tools.py`
-- Modify: `tests/test_web_gap_fill.py`
-
-- [ ] **Step 1: Write failing evaluator tests**
-
-```python
-from scripts.retrieval_tools import _evaluate_major_school_relation_evidence
-
-
-def test_major_school_relation_evaluator_accepts_official_undergraduate_snippet():
-    page = {
-        "url": "https://zsb.sjtu.edu.cn/ai.html",
-        "source_type": "official",
-        "confidence": "high",
-        "title": "上海交通大学本科招生专业",
-        "evidence_snippets": [
-            {"text": "上海交通大学本科招生专业目录包含人工智能专业。"}
-        ],
-    }
-    slots = {"major_name": "人工智能", "major_code": "080717T", "school_level_filter": "本科"}
-
-    evaluation = _evaluate_major_school_relation_evidence(page, slots)
-
-    assert evaluation["accepted"] is True
-    assert evaluation["filled_item"]["school_name"] == "上海交通大学"
-    assert evaluation["filled_item"]["source_url"] == "https://zsb.sjtu.edu.cn/ai.html"
-```
-
-- [ ] **Step 2: Run test and verify failure**
-
-Run:
-
-```powershell
-python -m pytest tests/test_web_gap_fill.py::test_major_school_relation_evaluator_accepts_official_undergraduate_snippet -q
-```
-
-Expected:
-
-```text
-ImportError or AttributeError for evaluator
-```
-
-- [ ] **Step 3: Implement evaluator**
-
-```python
-TRUSTED_WEB_SOURCE_TYPES = {"official", "exam_authority", "chsi"}
-UNDERGRADUATE_MARKERS = {"本科", "普通本科", "本科招生", "招生专业", "专业目录"}
-
-
-def _evaluate_major_school_relation_evidence(page: dict[str, Any], slots: dict[str, Any]) -> dict[str, Any]:
-    if page.get("source_type") not in TRUSTED_WEB_SOURCE_TYPES:
-        return {"accepted": False, "rejected_reason": "untrusted_source"}
-    snippets = page.get("evidence_snippets") or []
-    text = " ".join(str(item.get("text") or "") for item in snippets if isinstance(item, dict))
-    major_name = _text(slots.get("major_name"))
-    major_code = _text(slots.get("major_code"))
-    if major_name not in text and (not major_code or major_code not in text):
-        return {"accepted": False, "rejected_reason": "missing_major_name_or_code"}
-    if not any(marker in text for marker in UNDERGRADUATE_MARKERS):
-        return {"accepted": False, "rejected_reason": "missing_undergraduate_level"}
-    school_name = _extract_school_name_from_page(page, text)
-    if not school_name:
-        return {"accepted": False, "rejected_reason": "missing_school_identity"}
-    return {
-        "accepted": True,
-        "filled_item": {
-            "gap_key": "major_school_relation",
-            "school_name": school_name,
-            "major_name": major_name,
-            "major_code": major_code,
-            "school_level": "本科",
-            "source_type": page.get("source_type"),
-            "source_url": page.get("url"),
-            "evidence_snippet": snippets[0].get("text") if snippets else "",
-            "confidence": page.get("confidence") or "medium",
-        },
-    }
-```
-
-Add minimal extractor:
-
-```python
-def _extract_school_name_from_page(page: dict[str, Any], text: str) -> str:
-    title = _text(page.get("title"))
-    combined = f"{title} {text}"
-    for match in re.findall(r"[\u4e00-\u9fa5]{2,30}大学", combined):
-        return match
-    return ""
-```
-
-- [ ] **Step 4: Add rejection tests**
-
-Add tests for:
-
-```text
-third_party rejected as untrusted_source
-missing undergraduate marker rejected
-missing major name/code rejected
-```
-
-- [ ] **Step 5: Run tests**
-
-Run:
-
-```powershell
-python -m pytest tests/test_web_gap_fill.py -q
-```
-
-Expected:
-
-```text
-all evaluator tests pass
-```
-
----
-
-## Task 7: Implement web_gap_fill Loop
-
-**Files:**
-- Modify: `scripts/retrieval_tools.py`
-- Modify: `tests/test_web_gap_fill.py`
-
-- [ ] **Step 1: Write failing loop tests**
-
-Use an injected fake `web_search_fetcher` that returns:
-
-- Third-party search result in first query.
-- Official page after candidate query.
-- Official HTML containing an accepted snippet.
-
-```python
-def test_web_gap_fill_uses_third_party_only_as_candidate_then_verifies_official_page():
-    calls = []
-
-    def fetcher(url, timeout):
-        calls.append(url)
-        if "/search?" in url and "开设" in url:
-            return json.dumps({"results": [{
-                "title": "上海人工智能专业大学名单",
-                "url": "https://example.com/ai-shanghai",
-                "content": "上海交通大学开设人工智能专业。",
-                "score": 1.0,
-            }]}, ensure_ascii=False).encode("utf-8")
-        if "/search?" in url and "上海交通大学" in url:
-            return json.dumps({"results": [{
-                "title": "上海交通大学本科招生专业",
-                "url": "https://zsb.sjtu.edu.cn/ai.html",
-                "content": "本科招生专业目录包含人工智能。",
-                "score": 1.0,
-            }]}, ensure_ascii=False).encode("utf-8")
-        if url == "https://zsb.sjtu.edu.cn/ai.html":
-            return "<html><body>上海交通大学本科招生专业目录包含人工智能专业。</body></html>".encode("utf-8")
-        return json.dumps({"results": []}).encode("utf-8")
-
-    tools = RetrievalTools(client=None, web_search_fetcher=fetcher)
-
-    with patch.dict("os.environ", {"WEB_SEARCH_ENABLED": "true", "SEARXNG_BASE_URL": "http://127.0.0.1:8081"}, clear=True):
-        result = tools.web_gap_fill(
-            question="人工智能专业，上海有哪些本科院校开设？",
-            gap_type="major_school_list",
-            normalized_slots={"major_name": "人工智能", "major_code": "080717T", "province_filter": "上海", "school_level_filter": "本科"},
-            max_rounds=3,
-            max_queries=8,
-            max_pages=10,
-        )
-
-    assert result["status"] == "ok"
-    assert result["data"]["filled_items"][0]["school_name"] == "上海交通大学"
-    assert result["data"]["diagnostics"]["rejected_results"]
-```
-
-- [ ] **Step 2: Run test and verify failure**
-
-Run:
-
-```powershell
-python -m pytest tests/test_web_gap_fill.py::test_web_gap_fill_uses_third_party_only_as_candidate_then_verifies_official_page -q
-```
-
-Expected:
-
-```text
-status not_found from stub or missing loop
-```
-
-- [ ] **Step 3: Implement bounded loop**
-
-Algorithm:
-
-```python
-def web_gap_fill(...):
-    validate inputs and limits
-    gap_items = _gap_items_for_question_type(gap_type, set(available_fields or []))
-    active_gaps = filter gap_keys if provided
-    if no resolvable gaps: return partial with unfilled_gaps
-    queries = _build_gap_fill_queries(gap_type, active_gaps, candidate_schools=[])
-    for query_plan in queries up to max_queries:
-        call self.web_evidence_fetch(...)
-        count pages
-        evaluate accepted pages
-        collect filled_items
-        collect rejected_results
-        extract candidate_schools from third-party rejected search results
-        extend queries with official verification queries
-        stop if max_pages reached or all required gaps filled
-    return ok/partial/not_found
-```
-
-- [ ] **Step 4: Run web_gap_fill tests**
-
-Run:
-
-```powershell
-python -m pytest tests/test_web_gap_fill.py -q
-```
-
-Expected:
-
-```text
-web_gap_fill tests pass
-```
-
----
-
-## Task 8: Update Agent Fallback Priority
-
-**Files:**
-- Modify: `scripts/deepseek_retrieval_agent.py`
-- Modify: `tests/test_deepseek_retrieval_agent.py`
-
-- [ ] **Step 1: Write failing test**
-
-```python
-def test_auto_runs_web_gap_fill_before_fetch_when_registered(self):
-    # Fake model calls major_school_list.
-    # Dispatcher returns not_found + data_gaps.
-    # Agent should call web_gap_fill, not web_evidence_fetch.
-```
-
-Expected dispatcher calls:
-
-```python
-[
-    ("major_school_list", {"major_text": "人工智能", "province_filter": "上海"}),
-    ("web_gap_fill", {"question": "...", "gap_type": "major_school_list", ...}),
-]
-```
-
-- [ ] **Step 2: Run test and verify failure**
-
-Run:
-
-```powershell
-python -m pytest tests/test_deepseek_retrieval_agent.py::DeepSeekRetrievalAgentTests::test_auto_runs_web_gap_fill_before_fetch_when_registered -q
-```
-
-Expected:
-
-```text
-agent calls web_evidence_fetch or web_evidence_search instead
-```
-
-- [ ] **Step 3: Update fallback priority**
-
-Add constants:
-
-```python
-WEB_GAP_FILL_TOOL = "web_gap_fill"
-WEB_EVIDENCE_TOOLS = {WEB_GAP_FILL_TOOL, WEB_EVIDENCE_FETCH_TOOL, WEB_EVIDENCE_SEARCH_TOOL}
-```
-
-Update selection:
-
-```python
-def _web_fallback_tool_name(tools):
-    if _tool_available(tools, WEB_GAP_FILL_TOOL):
-        return WEB_GAP_FILL_TOOL
-    if _tool_available(tools, WEB_EVIDENCE_FETCH_TOOL):
-        return WEB_EVIDENCE_FETCH_TOOL
-    if _tool_available(tools, WEB_EVIDENCE_SEARCH_TOOL):
-        return WEB_EVIDENCE_SEARCH_TOOL
-    return None
-```
-
-Build arguments for `web_gap_fill`:
-
-```python
-if tool_name == WEB_GAP_FILL_TOOL:
-    arguments = {
-        "question": user_text,
-        "gap_type": _infer_gap_type_from_round_results(round_results),
-        "normalized_slots": _merged_normalized_slots(round_results),
-        "max_rounds": _web_gap_fill_max_rounds(),
-        "max_queries": _web_gap_fill_max_queries(),
-        "max_pages": _web_gap_fill_max_pages(),
-        "source_policy": "official_only",
-    }
-```
-
-- [ ] **Step 4: Run agent tests**
-
-Run:
-
-```powershell
 python -m pytest tests/test_deepseek_retrieval_agent.py -q
 ```
 
-Expected:
+如需真实网页测试，需要先确认：
 
-```text
-all agent tests pass
+```powershell
+docker ps
+$env:SEARXNG_BASE_URL="http://127.0.0.1:8081"
 ```
 
 ---
 
-## Task 9: Documentation And Real Smoke Tests
+## 六、第一版边界
 
-**Files:**
-- Modify: `tests/function_calls/web_gap_fill/README.md`
-- Modify: `tests/function_calls/data_gap_detection/README.md`
+第一版只建议覆盖高频且证据相对可验证的缺口：
 
-- [ ] **Step 1: Update web_gap_fill README**
+- `major_school_relation`：某专业有哪些学校开设。
+- `school_major_catalog`：某学校开设哪些专业。
+- `admission_history`：某专业或学校的录取历史。
+- `official_admission_rule`：官方招生规则、招生章程。
 
-Document:
+暂不自动补全：
 
-```text
-principle
-input/output
-status semantics
-source policy
-accepted vs rejected evidence
-limits
-test commands
-known risks
-```
+- 真实转专业成功率。
+- 真实分流比例。
+- 非公开就业明细。
+- 需要登录、验证码或复杂 JS 渲染的数据。
+- 无法稳定追溯到官方来源的论坛、营销号、问答平台内容。
 
-- [ ] **Step 2: Run selected unit tests**
-
-Run:
-
-```powershell
-python -m pytest tests/test_gap_detection_registry.py tests/test_web_gap_fill.py tests/test_retrieval_function_registry.py tests/test_deepseek_retrieval_agent.py tests/test_retrieval_tools.py -q
-```
-
-Expected:
-
-```text
-all selected tests pass
-```
-
-- [ ] **Step 3: Run real SearXNG smoke**
-
-Run:
-
-```powershell
-$env:WEB_SEARCH_ENABLED='true'
-$env:WEB_SEARCH_PROVIDER='searxng'
-$env:SEARXNG_BASE_URL='http://127.0.0.1:8081'
-python scripts\retrieval_tools.py web_gap_fill --question "人工智能专业，上海有哪些本科院校开设？" --gap-type major_school_list --normalized-slots-json "{\"major_name\":\"人工智能\",\"major_code\":\"080717T\",\"province_filter\":\"上海\",\"school_level_filter\":\"本科\"}" --max-rounds 3 --max-queries 8 --max-pages 20
-```
-
-Expected:
-
-```text
-status ok/partial/not_found
-filled_items only when official evidence exists
-third-party-only results remain in diagnostics
-```
-
-- [ ] **Step 4: Run real DeepSeek smoke**
-
-Run:
-
-```powershell
-$env:WEB_SEARCH_ENABLED='true'
-$env:WEB_SEARCH_PROVIDER='searxng'
-$env:SEARXNG_BASE_URL='http://127.0.0.1:8081'
-python scripts\deepseek_retrieval_agent.py "人工智能专业，上海有哪些本科院校开设？" --show-trace
-```
-
-Expected trace:
-
-```text
-major_school_list -> web_gap_fill
-```
-
-Expected answer:
-
-```text
-If official evidence is missing, do not list third-party candidates as confirmed schools.
-If official evidence exists, cite URL and snippet.
-```
+这些数据可以进入 `unfilled_gaps`，由 Agent 明确提示用户“当前无法通过可信公开来源确认”。
 
 ---
 
-## Risks And Guardrails
+## 七、风险和防护
 
-- Keep `web_evidence_fetch` as a lower-level tool. Do not put gap semantics into it.
-- Do not let `web_gap_fill` expose rejected third-party results as answer-ready data.
-- Do not web-search slot gaps. Missing `province`, `subject_type`, `year`, `rank_or_score`, or ambiguous entities should trigger clarification.
-- Do not mark private or non-public data as web-resolvable.
-- Add limits for rounds, queries, pages, and timeout before running real web calls.
-- Keep the first implementation limited to `major_school_list`; expand after real smoke results are stable.
+### 1. 第三方结果污染
 
-## Initial Scope
+风险：搜索引擎结果页或第三方网站给出学校名单，Agent 直接复述。
 
-The first implementation should only fully support:
+防护：
+
+- 默认 `source_policy=official_only`。
+- 第三方结果只能进入 `rejected_evidence` 或候选列表。
+- 最终答案不读取 rejected 作为事实。
+
+### 2. 本地地区数据缺失导致错误结论
+
+风险：本地库缺地区字段，导致“上海没有院校开设人工智能”这种错误结论。
+
+防护：
+
+- 地区字段缺失时，gap 类型应标记为 `scope_or_location_gap` 或在 `unfilled_gaps` 中说明。
+- 不能把本地过滤后的空结果直接解释为客观不存在。
+
+### 3. 网页内容不完整
+
+风险：官网页面是 PDF、图片、附件或 JS 渲染，普通 HTML 抓取不到。
+
+防护：
+
+- `web_evidence_fetch` 已支持 PDF 时继续复用。
+- 对图片、Excel、JS 页面第一版可以返回 `content_too_short` 或 `unsupported_content_type`。
+- 后续再加 OCR、Excel 解析、浏览器渲染。
+
+### 4. 多轮搜索失控
+
+风险：Agent 为了补一个缺口不断搜索。
+
+防护：
+
+- `max_rounds` 默认 3。
+- `max_fetches_per_round` 默认 5。
+- URL 去重。
+- 每个 gap 有状态迁移，无法补上就进入 `unfilled_gaps`。
+
+---
+
+## 八、验收标准
+
+最终实现完成后，需要满足：
+
+- `data_gap_detection` 能返回结构化 `gap_items`。
+- `unknown_question_type` 返回 `needs_clarification` 和支持的问题类型列表。
+- 空核心列表不会返回 `ok`。
+- `major_school_list` 的空结果能被识别为 `major_school_relation` 缺口。
+- `web_gap_fill` 能进行有限轮次搜索、抓取、证据评估。
+- 第三方结果不会进入 `accepted_evidence`。
+- Agent 优先使用 `web_gap_fill` 补缺口。
+- Agent 最终回答能区分：
+  - 本地库命中。
+  - 官方网页补充确认。
+  - 未能通过可信来源确认。
+- 新增和修改的测试全部通过。
+- `tests/function_calls/web_gap_fill/README.md` 用中文说明工具原理、测试范围、测试结果和改进方向。
+
+---
+
+## 九、建议实施顺序
+
+推荐按以下顺序执行：
+
+1. 先实现核心字段注册表和 `_infer_available_fields`。
+2. 再升级 `data_gap_detection`。
+3. 实现 `_detect_tool_result_gaps`。
+4. 注册 `web_gap_fill`，先做空壳和 schema 测试。
+5. 实现 `major_school_relation` 的 query planner。
+6. 实现证据评估器。
+7. 串起 `web_gap_fill` 主循环。
+8. 修改 Agent fallback。
+9. 补 README 和真实 API 烟测记录。
+
+不建议一开始就覆盖全部 27 个工具。应该先把一条高频链路做严谨：
 
 ```text
-major_school_list -> major_school_relation
+用户问：人工智能专业，上海有哪些本科院校开设？
+本地工具：major_school_list
+缺口检测：major_school_relation
+网页补全：web_gap_fill
+最终回答：只输出官方证据确认过的学校，并说明未确认项
 ```
 
-It should define but not fully implement web filling for:
-
-```text
-school_major_list
-admission_history
-plan_history
-subject_requirement_lookup
-policy_rule_lookup
-fee_and_campus_lookup
-```
-
-This keeps the first version testable and prevents broad, fragile behavior.
-
-## Final Acceptance Criteria
-
-- `data_gap_detection` returns `partial` when known question types still have missing fields.
-- `data_gap_detection` returns structured `gap_items`.
-- Core result fields exist for high-risk tools.
-- Empty core fields produce structured gaps.
-- `web_gap_fill` is registered as a function-call tool.
-- `web_gap_fill` performs bounded multi-round filling for `major_school_list`.
-- Third-party-only evidence never creates `filled_items`.
-- The agent prefers `web_gap_fill` over `web_evidence_fetch` and `web_evidence_search`.
-- Real agent trace shows local tool followed by `web_gap_fill`.
-- Final answers cite accepted evidence URLs and snippets, or explicitly state that official verification failed.
+这条链路跑通后，再把同样模式扩展到其它志愿工具。
