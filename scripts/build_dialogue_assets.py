@@ -257,62 +257,85 @@ REQUIRED_SLOTS_BY_FAMILY: dict[str, list[str]] = {
 class SourceInventoryItem:
     source_name: str
     source_type: str
+    source_url: str
+    license: str
     path: str
     is_real_dialogue: bool
     usable_for: list[str]
     risk_notes: list[str]
+    attribution_note: str
 
 
 def build_source_inventory(project_root: Path) -> list[dict[str, Any]]:
-    base = project_root / SOURCE_ROOT
+    def source_path(*parts: str) -> str:
+        return str(Path(SOURCE_ROOT, *parts))
+
     items = [
         SourceInventoryItem(
             source_name="Xue-Feng-Skill",
             source_type="public_asr",
-            path=str(base / "Xue-Feng-Skill" / "data" / "transcripts"),
+            source_url="https://github.com/SPA3K/Xue-Feng-Skill",
+            license="MIT",
+            path=source_path("Xue-Feng-Skill", "data", "transcripts"),
             is_real_dialogue=False,
             usable_for=["question_candidates", "strategy_reference", "style_reference"],
             risk_notes=["公开视频ASR，无说话人标注，需清洗后使用"],
+            attribution_note="本数据集 152 条对话清洗记录均衍生自该仓库 data/transcripts/ 下的公开视频 ASR 转写。",
         ),
         SourceInventoryItem(
             source_name="zhangxuefeng-skillset",
             source_type="methodology_md",
-            path=str(base / "zhangxuefeng-skillset" / "knowledge"),
+            source_url="https://github.com/Eric-Yibo-Shen/zhangxuefeng-skillset",
+            license="CC BY 4.0 for knowledge/prompts; separate code license in source repo",
+            path=source_path("zhangxuefeng-skillset", "knowledge"),
             is_real_dialogue=False,
             usable_for=["mentor_strategy", "rag_methodology"],
             risk_notes=["社区整理的方法论，不是原始对话"],
+            attribution_note="仅作为导师策略结构化参考，不作为真实对话来源。",
         ),
         SourceInventoryItem(
             source_name="gaokao-mentor-wisdom",
             source_type="quote_paraphrase",
-            path=str(base / "gaokao-mentor-wisdom"),
+            source_url="https://github.com/dongsheng123132/gaokao-mentor-wisdom",
+            license="MIT",
+            path=source_path("gaokao-mentor-wisdom"),
             is_real_dialogue=False,
             usable_for=["mentor_strategy", "quote_reference"],
             risk_notes=["语录多为转述，缺少原始视频链接和日期"],
+            attribution_note="仅作为策略整理参考；不得把转述语录当作导师原始逐字回复。",
         ),
         SourceInventoryItem(
             source_name="zhangxuefeng-skill",
             source_type="style_prompt",
-            path=str(base / "zhangxuefeng-skill"),
+            source_url="https://github.com/alchaincyf/zhangxuefeng-skill",
+            license="MIT",
+            path=source_path("zhangxuefeng-skill"),
             is_real_dialogue=False,
             usable_for=["strategy_reference", "style_reference"],
             risk_notes=["风格和研究整理，不是事实数据源"],
+            attribution_note="仅作为风格和策略参考，不作为事实数据源。",
         ),
         SourceInventoryItem(
             source_name="zhangxuefeng-skill-demo",
             source_type="synthetic_demo",
-            path=str(base / "zhangxuefeng-skill" / "examples" / "demo-conversation.md"),
+            source_url="https://github.com/alchaincyf/zhangxuefeng-skill",
+            license="MIT",
+            path=source_path("zhangxuefeng-skill", "examples", "demo-conversation.md"),
             is_real_dialogue=False,
             usable_for=["strategy_reference", "style_reference"],
             risk_notes=["模拟对话，禁止标记为真实对话"],
+            attribution_note="该 demo 是模拟对话，禁止混入真实对话数据集。",
         ),
         SourceInventoryItem(
             source_name="zhang-xuefeng-memorial",
             source_type="methodology_md",
-            path=str(base / "zhang-xuefeng-memorial" / "knowledge"),
+            source_url="https://github.com/bcefghj/zhang-xuefeng-memorial",
+            license="CC BY 4.0",
+            path=source_path("zhang-xuefeng-memorial", "knowledge"),
             is_real_dialogue=False,
             usable_for=["mentor_strategy"],
             risk_notes=["纪念和观点整理，不进入事实主链路"],
+            attribution_note="仅作为观点整理参考，不进入事实主链路或真实对话主链路。",
         ),
     ]
     return [asdict(item) for item in items]

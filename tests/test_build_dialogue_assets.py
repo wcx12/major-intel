@@ -39,6 +39,9 @@ def test_source_inventory_labels_known_repositories():
     assert by_name["gaokao-mentor-wisdom"]["source_type"] == "quote_paraphrase"
     assert by_name["zhangxuefeng-skill"]["source_type"] == "style_prompt"
     assert by_name["zhang-xuefeng-memorial"]["source_type"] == "methodology_md"
+    assert by_name["Xue-Feng-Skill"]["source_url"] == "https://github.com/SPA3K/Xue-Feng-Skill"
+    assert by_name["Xue-Feng-Skill"]["license"] == "MIT"
+    assert by_name["Xue-Feng-Skill"]["attribution_note"]
 
 
 def test_source_inventory_marks_synthetic_demo_as_not_real_dialogue():

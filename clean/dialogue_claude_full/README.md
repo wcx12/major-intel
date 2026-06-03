@@ -26,6 +26,7 @@ python scripts/build_dialogue_assets.py \
 ## 核心文件
 
 - `README.md`：当前说明文件。
+- `SOURCES.md`：第三方仓库来源引用、许可证和署名说明。
 - `asr_question_candidates.jsonl`：从 ASR 里抽取的原始问题候选及导师回复片段。
 - `llm_cleaned_dialogues.jsonl`：Claude Code 清洗后的全量对话记录。
 - `question_bank.jsonl`：问题库，全量 152 条，适合做检索覆盖、intent 分类、function-call 覆盖分析。
@@ -103,3 +104,4 @@ python scripts/build_dialogue_assets.py \
 - `mentor_strategy` 是策略抽取，不应直接展示为导师原话。
 - 涉及院校、专业、录取概率、分数线、位次等事实判断时，必须接入官方数据源或项目内检索工具二次核验。
 - 若用于产品侧展示，建议先对 `review_queue.jsonl` 做人工复核。
+- 继续分发或引用本目录数据时，应同时保留 `SOURCES.md` 和 `source_inventory.json`。
