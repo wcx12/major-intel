@@ -1,3 +1,37 @@
 # major_streaming_policy_lookup
 
-Placeholder for dedicated function-call tests for `major_streaming_policy_lookup`.
+## 1. 工具原理
+
+`major_streaming_policy_lookup` 查询大类招生、专业分流或培养方向相关政策线索。当前偏保守接口，主要整理学校、专业和专业组上下文，并提示正式政策缺口。
+
+## 2. 输入与输出
+
+- 主要输入：`school_text`、`major_text`。
+- 可选输入：省份、科类、年份。
+- 关键输出：分流政策线索、专业组上下文、缺口提示。
+
+## 3. 状态语义
+
+- `ok`：命中明确分流政策线索。
+- `partial`：仅有上下文或线索，不足以正式判断。
+- `not_found`：没有分流政策或上下文记录。
+- `needs_clarification`：学校或专业输入缺失、歧义。
+
+## 4. 测试范围
+
+当前仅完成目录和 README 结构。后续应覆盖学校专业解析、无政策线索、专业组上下文、缺官方来源、风险提示。
+
+## 5. 测试结果
+
+- 最近运行日期：尚未运行专属测试。
+- 运行命令：待补充。
+- 运行结果：待补充。
+
+## 6. 已知风险与待改善
+
+- 真实分流比例和规则需要官方来源。
+- 需要补充“不能正式判定分流风险”的保护测试。
+
+## 7. 关联文件
+
+- 实现：[scripts/retrieval_tools.py](../../../scripts/retrieval_tools.py)

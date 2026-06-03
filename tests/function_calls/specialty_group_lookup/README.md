@@ -1,3 +1,38 @@
 # specialty_group_lookup
 
-Placeholder for dedicated function-call tests for `specialty_group_lookup`.
+## 1. 工具原理
+
+`specialty_group_lookup` 查询院校专业组及组内专业样本。它先解析学校，可选解析专业，再按省份、科类、年份查询专业组相关表。
+
+## 2. 输入与输出
+
+- 主要输入：`school_text`、省份、科类、年份。
+- 可选输入：`major_text`、limit。
+- 关键输出：专业组、组内专业、计划数、选科线索。
+
+## 3. 状态语义
+
+- `ok`：命中专业组记录。
+- `not_found`：没有专业组记录。
+- `needs_clarification`：学校或必要上下文缺失、学校歧义。
+- `partial`：部分上下文缺失时只能返回宽泛样本。
+
+## 4. 测试范围
+
+当前仅完成目录和 README 结构。后续应覆盖学校解析传播、专业过滤、年份省份科类缺失、空结果、组内专业结构。
+
+## 5. 测试结果
+
+- 最近运行日期：尚未运行专属测试。
+- 运行命令：待补充。
+- 运行结果：待补充。
+
+## 6. 已知风险与待改善
+
+- 专业组规则强依赖省份和年份。
+- 需要补充冷门专业组、多个专业同组、缺选科要求的测试。
+
+## 7. 关联文件
+
+- 实现：[scripts/retrieval_tools.py](../../../scripts/retrieval_tools.py)
+- 相关工具：`specialty_group_risk`

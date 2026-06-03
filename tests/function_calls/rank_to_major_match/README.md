@@ -1,3 +1,38 @@
 # rank_to_major_match
 
-Placeholder for dedicated function-call tests for `rank_to_major_match`.
+## 1. 工具原理
+
+`rank_to_major_match` 根据位次或分数查询学校专业层面的历史录取匹配。它会解析专业，并结合学校录取统计和专业录取统计返回候选。
+
+## 2. 输入与输出
+
+- 主要输入：`major_text`、省份、科类、年份、位次或分数。
+- 可选输入：学校过滤、冲稳保策略、limit。
+- 关键输出：候选学校专业、历史分数、历史位次、风险标签。
+
+## 3. 状态语义
+
+- `ok`：返回专业匹配候选。
+- `not_found`：没有匹配记录或专业未命中。
+- `needs_clarification`：缺少专业、位次或分数等必要槽位。
+- `partial`：部分上下文不足或上游转换有限。
+
+## 4. 测试范围
+
+当前仅完成目录和 README 结构。后续应覆盖专业解析失败、分数转位次、直接位次、空结果、学校过滤、专业录取记录排序。
+
+## 5. 测试结果
+
+- 最近运行日期：尚未运行专属测试。
+- 运行命令：待补充。
+- 运行结果：待补充。
+
+## 6. 已知风险与待改善
+
+- 历史专业录取不代表未来录取保证。
+- 需要补充专业组省份、批次和选科条件带来的口径差异测试。
+
+## 7. 关联文件
+
+- 实现：[scripts/retrieval_tools.py](../../../scripts/retrieval_tools.py)
+- 上游工具：`score_to_rank`、`major_lookup`

@@ -1,3 +1,37 @@
 # fee_and_campus_lookup
 
-Placeholder for dedicated function-call tests for `fee_and_campus_lookup`.
+## 1. 工具原理
+
+`fee_and_campus_lookup` 查询学校专业的学费、校区和住宿等线索。它会解析学校和可选专业，再查询招生计划或政策文本中的费用与校区字段。
+
+## 2. 输入与输出
+
+- 主要输入：`school_text`，可选 `major_text`、省份、年份。
+- 关键输出：学费、校区、住宿费、来源线索。
+- 重要说明：缺少官方来源时只能作为线索。
+
+## 3. 状态语义
+
+- `ok`：命中费用或校区记录。
+- `not_found`：没有相关记录。
+- `needs_clarification`：学校或专业输入缺失、歧义。
+- `partial`：只命中部分费用或校区线索。
+
+## 4. 测试范围
+
+当前仅完成目录和 README 结构。后续应覆盖学校解析、专业解析、只查学校、查学校专业、字段缺失、来源提示。
+
+## 5. 测试结果
+
+- 最近运行日期：尚未运行专属测试。
+- 运行命令：待补充。
+- 运行结果：待补充。
+
+## 6. 已知风险与待改善
+
+- 学费和校区经常按年份、批次、省份变化。
+- 需要补充中外合作、不同校区、不同专业学费差异测试。
+
+## 7. 关联文件
+
+- 实现：[scripts/retrieval_tools.py](../../../scripts/retrieval_tools.py)

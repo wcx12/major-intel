@@ -1,3 +1,38 @@
 # rank_to_school_match
 
-Placeholder for dedicated function-call tests for `rank_to_school_match`.
+## 1. 工具原理
+
+`rank_to_school_match` 根据位次或分数推算学校层面的历史录取匹配。分数输入会先复用 `score_to_rank` 转换位次，再查询学校录取历史。
+
+## 2. 输入与输出
+
+- 主要输入：省份、科类、年份、位次或分数。
+- 可选输入：学校层级过滤、冲稳保策略、limit。
+- 关键输出：候选学校、历史位次、匹配风险分层。
+
+## 3. 状态语义
+
+- `ok`：返回学校匹配候选。
+- `not_found`：没有匹配记录。
+- `needs_clarification`：缺少必要位次或分数、缺省份或科类。
+- `partial`：部分上下文不足或上游转换结果有限。
+
+## 4. 测试范围
+
+当前仅完成目录和 README 结构。后续应覆盖分数转位次、直接位次、缺槽、双一流过滤、空结果、风险分层。
+
+## 5. 测试结果
+
+- 最近运行日期：尚未运行专属测试。
+- 运行命令：待补充。
+- 运行结果：待补充。
+
+## 6. 已知风险与待改善
+
+- 学校匹配不等于专业录取保证。
+- 需要补充批次、年份、招生口径差异的风险提示测试。
+
+## 7. 关联文件
+
+- 实现：[scripts/retrieval_tools.py](../../../scripts/retrieval_tools.py)
+- 上游工具：`score_to_rank`

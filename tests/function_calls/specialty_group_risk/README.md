@@ -1,3 +1,38 @@
 # specialty_group_risk
 
-Placeholder for dedicated function-call tests for `specialty_group_risk`.
+## 1. 工具原理
+
+`specialty_group_risk` 基于专业组查询结果做风险初筛，识别组内专业分流、冷门专业混组、选科和计划数等风险线索。
+
+## 2. 输入与输出
+
+- 主要输入：学校、省份、科类、年份、可选专业。
+- 关键输出：风险项、专业组上下文、风险说明。
+- 重要说明：这是风险初筛，不是正式录取或分流判定。
+
+## 3. 状态语义
+
+- `ok`：返回风险初筛结果。
+- `not_found`：没有专业组上下文。
+- `needs_clarification`：必要上下文缺失或学校歧义。
+- `partial`：专业组信息不完整但可提示风险。
+
+## 4. 测试范围
+
+当前仅完成目录和 README 结构。后续应覆盖无专业组、单专业组、多专业混组、冷门专业提示、计划数异常。
+
+## 5. 测试结果
+
+- 最近运行日期：尚未运行专属测试。
+- 运行命令：待补充。
+- 运行结果：待补充。
+
+## 6. 已知风险与待改善
+
+- 风险规则需要持续校准，不能替代招生章程。
+- 需要补充高风险提示和数据不足提示的边界测试。
+
+## 7. 关联文件
+
+- 实现：[scripts/retrieval_tools.py](../../../scripts/retrieval_tools.py)
+- 上游工具：`specialty_group_lookup`

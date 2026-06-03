@@ -1,3 +1,37 @@
 # subject_requirement_lookup
 
-Placeholder for dedicated function-call tests for `subject_requirement_lookup`.
+## 1. 工具原理
+
+`subject_requirement_lookup` 查询专业或学校专业组相关的选科要求。它会解析专业和可选学校，再从专业组或计划相关数据中提取选科要求线索。
+
+## 2. 输入与输出
+
+- 主要输入：`major_text`。
+- 可选输入：`school_text`、省份、年份、limit。
+- 关键输出：选科要求记录、对应学校或专业组线索。
+
+## 3. 状态语义
+
+- `ok`：命中选科要求。
+- `not_found`：没有选科要求记录。
+- `needs_clarification`：缺少专业或学校歧义。
+- `partial`：上下文不足时返回宽泛线索。
+
+## 4. 测试范围
+
+当前仅完成目录和 README 结构。后续应覆盖专业解析、学校解析、空结果、省份年份过滤、选科文本为空。
+
+## 5. 测试结果
+
+- 最近运行日期：尚未运行专属测试。
+- 运行命令：待补充。
+- 运行结果：待补充。
+
+## 6. 已知风险与待改善
+
+- 选科要求高度依赖省份、年份和专业组。
+- 需要补充“可查到线索但不能下正式可报结论”的提示测试。
+
+## 7. 关联文件
+
+- 实现：[scripts/retrieval_tools.py](../../../scripts/retrieval_tools.py)

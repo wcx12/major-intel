@@ -1,3 +1,37 @@
 # policy_rule_lookup
 
-Placeholder for dedicated function-call tests for `policy_rule_lookup`.
+## 1. 工具原理
+
+`policy_rule_lookup` 查询招生政策、章程规则、身体限制、单科要求等政策线索。它先解析学校，再查政策规则相关数据。
+
+## 2. 输入与输出
+
+- 主要输入：`school_text`。
+- 可选输入：`rule_type`、年份、关键词。
+- 关键输出：政策规则线索、来源、缺口提示。
+
+## 3. 状态语义
+
+- `ok`：命中政策规则。
+- `not_found`：没有对应政策规则。
+- `needs_clarification`：学校输入缺失或歧义。
+- `partial`：仅有线索，缺少正式来源或条件不完整。
+
+## 4. 测试范围
+
+当前仅完成目录和 README 结构。后续应覆盖规则类型、学校解析传播、空结果、官方来源缺失、身体限制和单科要求。
+
+## 5. 测试结果
+
+- 最近运行日期：尚未运行专属测试。
+- 运行命令：待补充。
+- 运行结果：待补充。
+
+## 6. 已知风险与待改善
+
+- 政策规则属于高风险事实，必须标注来源和年份。
+- 需要补充“没有官方来源时进入缺口”的测试。
+
+## 7. 关联文件
+
+- 实现：[scripts/retrieval_tools.py](../../../scripts/retrieval_tools.py)
