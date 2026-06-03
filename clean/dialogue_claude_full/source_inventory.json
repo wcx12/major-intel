@@ -1,0 +1,80 @@
+[
+  {
+    "source_name": "Xue-Feng-Skill",
+    "source_type": "public_asr",
+    "path": "C:\\Users\\10627\\Desktop\\major-intel\\gaokao-zhiyuan-projects\\Xue-Feng-Skill\\data\\transcripts",
+    "is_real_dialogue": false,
+    "usable_for": [
+      "question_candidates",
+      "strategy_reference",
+      "style_reference"
+    ],
+    "risk_notes": [
+      "公开视频ASR，无说话人标注，需清洗后使用"
+    ]
+  },
+  {
+    "source_name": "zhangxuefeng-skillset",
+    "source_type": "methodology_md",
+    "path": "C:\\Users\\10627\\Desktop\\major-intel\\gaokao-zhiyuan-projects\\zhangxuefeng-skillset\\knowledge",
+    "is_real_dialogue": false,
+    "usable_for": [
+      "mentor_strategy",
+      "rag_methodology"
+    ],
+    "risk_notes": [
+      "社区整理的方法论，不是原始对话"
+    ]
+  },
+  {
+    "source_name": "gaokao-mentor-wisdom",
+    "source_type": "quote_paraphrase",
+    "path": "C:\\Users\\10627\\Desktop\\major-intel\\gaokao-zhiyuan-projects\\gaokao-mentor-wisdom",
+    "is_real_dialogue": false,
+    "usable_for": [
+      "mentor_strategy",
+      "quote_reference"
+    ],
+    "risk_notes": [
+      "语录多为转述，缺少原始视频链接和日期"
+    ]
+  },
+  {
+    "source_name": "zhangxuefeng-skill",
+    "source_type": "style_prompt",
+    "path": "C:\\Users\\10627\\Desktop\\major-intel\\gaokao-zhiyuan-projects\\zhangxuefeng-skill",
+    "is_real_dialogue": false,
+    "usable_for": [
+      "strategy_reference",
+      "style_reference"
+    ],
+    "risk_notes": [
+      "风格和研究整理，不是事实数据源"
+    ]
+  },
+  {
+    "source_name": "zhangxuefeng-skill-demo",
+    "source_type": "synthetic_demo",
+    "path": "C:\\Users\\10627\\Desktop\\major-intel\\gaokao-zhiyuan-projects\\zhangxuefeng-skill\\examples\\demo-conversation.md",
+    "is_real_dialogue": false,
+    "usable_for": [
+      "strategy_reference",
+      "style_reference"
+    ],
+    "risk_notes": [
+      "模拟对话，禁止标记为真实对话"
+    ]
+  },
+  {
+    "source_name": "zhang-xuefeng-memorial",
+    "source_type": "methodology_md",
+    "path": "C:\\Users\\10627\\Desktop\\major-intel\\gaokao-zhiyuan-projects\\zhang-xuefeng-memorial\\knowledge",
+    "is_real_dialogue": false,
+    "usable_for": [
+      "mentor_strategy"
+    ],
+    "risk_notes": [
+      "纪念和观点整理，不进入事实主链路"
+    ]
+  }
+]
