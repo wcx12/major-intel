@@ -214,7 +214,7 @@
       "allowed_statuses": ["ok", "partial", "not_found"],
       "expected_data_keys": ["school", "major", "school_major", "available_fields"],
       "args_list": [
-        {"id_suffix": "hdu_cs_gd_2025", "args": {"school": "杭州电子科技大学", "major": "计算机科学与技术", "province": "广东", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
+        {"id_suffix": "hdu_cs_gd_2025", "args": {"school": "杭州电子科技大学", "major": "计算机科学与技术", "province": "广东", "subject_type": "物理", "year": 2025}, "target_status": "ok"},
         {"id_suffix": "hdu_software_zj_2025", "args": {"school": "杭州电子科技大学", "major": "软件工程", "province": "浙江", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
         {"id_suffix": "hdu_ai_zj_2025", "args": {"school": "杭州电子科技大学", "major": "人工智能", "province": "浙江", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
         {"id_suffix": "zju_cs_zj_2025", "args": {"school": "浙江大学", "major": "计算机科学与技术", "province": "浙江", "subject_type": "物理", "year": 2025}, "target_status": "partial"},
@@ -449,7 +449,7 @@
       "allowed_statuses": ["partial", "not_found"],
       "expected_data_keys": ["school", "major", "group_context"],
       "args_list": [
-        {"id_suffix": "hdu_cs_zj_2025", "args": {"school": "杭州电子科技大学", "major": "计算机", "province": "浙江", "year": 2025, "limit": 5}},
+        {"id_suffix": "hdu_cs_zj_2025", "args": {"school": "杭州电子科技大学", "major": "计算机科学与技术", "province": "浙江", "year": 2025, "limit": 5}},
         {"id_suffix": "zju_cs_zj_2025", "args": {"school": "浙江大学", "major": "计算机科学与技术", "province": "浙江", "year": 2025, "limit": 5}},
         {"id_suffix": "unknown_school", "args": {"school": "不存在大学测试样本999", "major": "计算机", "province": "浙江", "year": 2025, "limit": 5}, "target_status": "not_found"}
       ]
@@ -490,7 +490,7 @@
       "allowed_statuses": ["ok", "partial", "not_found", "needs_clarification"],
       "expected_data_keys": ["records"],
       "args_list": [
-        {"id_suffix": "hdu_cs_gd_physics", "args": {"school": "杭州电子科技大学", "major": "计算机科学与技术", "province": "广东", "subject_type": "物理", "years": [2023, 2024, 2025], "limit": 20}},
+        {"id_suffix": "hdu_software_zj_general", "args": {"school": "杭州电子科技大学", "major": "软件工程", "province": "浙江", "subject_type": "综合", "years": [2023, 2024, 2025], "limit": 20}},
         {"id_suffix": "hdu_software_zj_physics", "args": {"school": "杭州电子科技大学", "major": "软件工程", "province": "浙江", "subject_type": "物理", "years": [2023, 2024, 2025], "limit": 20}},
         {"id_suffix": "hdu_school_only_zj", "args": {"school": "杭州电子科技大学", "province": "浙江", "subject_type": "物理", "years": [2024, 2025], "limit": 20}},
         {"id_suffix": "cs_major_only_gd", "args": {"major": "计算机科学与技术", "province": "广东", "subject_type": "物理", "years": [2024, 2025], "limit": 20}},

@@ -72,7 +72,7 @@
 
 ### 当前已落地能力快照
 
-截至 2026-05-21，当前已经落地 27 个可调用检索入口：
+截至 2026-06-04，当前已经落地 30 个可调用检索入口：
 
 ```text
 school_lookup
@@ -102,6 +102,9 @@ admission_history
 major_market_reference
 civil_service_role_search
 data_gap_detection
+web_evidence_search
+web_evidence_fetch
+web_gap_fill
 ```
 
 已经具备的核心能力：
@@ -123,10 +126,10 @@ data_gap_detection
 
 已经完成的基础设施能力：
 
-- 已完成 `scripts/retrieval_tools.py` 工具层。
-- 已完成 `scripts/retrieval_function_registry.py` function schema 注册层和 dispatcher。
+- 已完成 `src/major_intel/function_calls/retrieval_tools.py` 工具层；`scripts/retrieval_tools.py` 作为兼容 CLI wrapper 保留。
+- 已完成 `src/major_intel/function_calls/registry.py` function schema 注册层和 dispatcher；`scripts/retrieval_function_registry.py` 作为兼容 CLI wrapper 保留。
 - 已完成 `scripts/run_retrieval_smoke_cases.py` 本地批量烟测脚本。
-- 已完成 27 个正式工具的真实库 smoke 矩阵：`data/retrieval_smoke_cases.json` 展开后为 305 个用例，并且会自动校验是否覆盖注册表里的全部工具名。
+- 已完成核心 SQL-first 工具的真实库 smoke 矩阵：`data/retrieval_smoke_cases.json` 展开后为 305 个用例；联网证据补全工具由 `tests/function_calls/web_*` 覆盖。
 - 已修复 MySQL CLI 长文本换行解析问题，避免专业介绍字段里的换行被拆成假候选记录。
 - 已修复录取历史表和学校基础表的学校关联键问题：`edu_school_admission_stats.school_id` 应按 `edu_university.code + name` 关联，而不是按 `edu_university.school_id` 关联。
 
@@ -947,7 +950,7 @@ data_gap_detection
 - 第三阶段 `specialty_group_risk`、`comparison_query`、`employment_summary`、`major_market_reference`、`source_trace_lookup` 已完成第一版。
 - 第四阶段 `transfer_policy_lookup`、`fee_and_campus_lookup` 已完成第一版；`major_streaming_policy_lookup`、`civil_service_mapping`、`policy_rule_lookup` 已完成保守接口第一版。
 - `major_market_reference` 和 `civil_service_role_search` 已经提前实现，用于读取已经接入的市场样本和考公岗位样本。
-- 已完成 agent function schema 注册层：`scripts/retrieval_function_registry.py`。
+- 已完成 agent function schema 注册层：`src/major_intel/function_calls/registry.py`，并保留 `scripts/retrieval_function_registry.py` 兼容入口。
 - 已完成自然语言总入口离线规则第一版：`scripts/natural_language_entrypoint.py`，可把高频中文问题自动映射到 intent、slots 和工具计划。
 - 已完成 DeepSeek function-call agent：`scripts/deepseek_retrieval_agent.py`，可让 LLM 基于同一套 function schema 自动选择本地工具。
 - 已完成统一入口：`scripts/retrieval_agent_entrypoint.py`，可在 `auto` 模式下优先使用规则入口，并把复杂/未知问题交给 DeepSeek agent。

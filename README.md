@@ -11,8 +11,8 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 当前已经完成：
 
 - 本地 MySQL 检索工具层。
-- 27 个正式 function call schema 与 dispatcher。
-- 27 个正式工具的真实库 smoke 矩阵，当前展开后为 305 个用例。
+- 30 个正式 function call schema 与 dispatcher，其中包含 3 个联网证据补全入口。
+- 核心本地检索工具的真实库 smoke 矩阵，当前展开后为 305 个用例。
 - 第一版 SQL-first RAG：本地 function call 负责检索，MySQL 查询结果作为回答上下文。
 - DeepSeek function-call agent。
 - 离线规则自然语言入口。
@@ -28,29 +28,31 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 
 更细的阶段性状态见 [docs/status/current-state.md](docs/status/current-state.md)。
 
-如果要人工逐个测试 27 个底层工具，命令清单见 [docs/status/retrieval-tool-manual-test-commands.md](docs/status/retrieval-tool-manual-test-commands.md)。
+如果要人工逐个测试底层工具，命令清单见 [docs/status/retrieval-tool-manual-test-commands.md](docs/status/retrieval-tool-manual-test-commands.md)。
 
 ## 系统分层
 
 ```text
 用户自然语言问题
   -> scripts/retrieval_agent_entrypoint.py
+       兼容 CLI wrapper，真实实现位于 src/major_intel/agents/
+  -> src/major_intel/agents/retrieval_agent_entrypoint.py
        auto 模式：先走离线规则入口，复杂/未知问题回退 DeepSeek
-  -> scripts/natural_language_entrypoint.py
+  -> src/major_intel/agents/natural_language_entrypoint.py
        规则识别 intent、slots、tool_plan
-  -> scripts/deepseek_retrieval_agent.py
+  -> src/major_intel/agents/deepseek_retrieval_agent.py
        DeepSeek 基于完整 function schema 自动选择工具
-  -> scripts/retrieval_function_registry.py
+  -> src/major_intel/function_calls/registry.py
        function schema 注册、参数校验、dispatcher
-  -> scripts/retrieval_tools.py
+  -> src/major_intel/function_calls/retrieval_tools.py
        MySQL 检索工具真实实现
-  -> scripts/agent_query_storage.py
+  -> src/major_intel/storage/agent_query_storage.py
        query_logs / retrieval_cache / agent_tool_traces / data_gap_queue
 ```
 
 第一版 RAG 的口径是 SQL-first：
 
-- `retrieval_function_registry.py` 暴露的 27 个 function call 就是 retriever。
+- `retrieval_function_registry.py` 暴露的 30 个 function call 就是 retriever。
 - `retrieval_tools.py` 查询本地 MySQL 后返回 `data`、`scope_notes`、`warnings`、`data_gaps` 和 `source_tables`。
 - agent 只基于这些工具结果组织回答，不能绕过工具凭模型记忆补事实。
 - 查不到的数据进入 `data_gap_queue` 和 `data_gap_evidence_tasks`，后续再由联网/人工流程补证据。
@@ -66,23 +68,23 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 ## 目录结构
 
 ```text
+src/major_intel/function_calls/        function schema、dispatcher、检索工具实现
+src/major_intel/agents/                规则入口、DeepSeek agent、统一 agent 入口
+src/major_intel/storage/               MySQL client、缓存、轨迹、缺口队列和别名初始化
+src/major_intel/evaluation/            smoke runner、边界评测和 oracle 代码
+
+scripts/*.py                           兼容 CLI wrapper，保留原手动测试命令
+scripts/rysxai_*                       第三方数据采集、报告、dashboard 脚本
+scripts/curate_*.py                    仍待第二批整理的一次性补数脚本
+
+docs/architecture/                     仓库结构与系统架构
 docs/research/                         起点调研与背景材料
 docs/specs/                            设计文档、工具规划、数据接入方案
 docs/status/current-state.md           当前状态快照
 
-scripts/local_retrieval_mvp.py         最早的本地检索 CLI MVP
-scripts/retrieval_tools.py             27 个底层检索工具的真实实现
-scripts/retrieval_function_registry.py function schema 注册与 dispatcher
-scripts/natural_language_entrypoint.py 离线规则自然语言入口
-scripts/deepseek_retrieval_agent.py    DeepSeek function-call agent
-scripts/retrieval_agent_entrypoint.py  统一 agent 入口
-scripts/agent_query_storage.py         查询日志、缓存、工具轨迹、缺口队列存储层
-scripts/run_retrieval_smoke_cases.py   批量 smoke case runner
-scripts/setup_entity_aliases.py        实体别名表初始化脚本
-scripts/rysxai_*                       第三方数据采集、报告、dashboard 脚本
-
-tests/                                 单元测试
+tests/                                 单元测试，后续继续按模块拆分
 data/seeds/                            可提交的小型种子数据
+data/raw/、data/processed/、tmp/        本地数据与临时产物，默认不提交
 ```
 
 ## 本地环境
@@ -105,7 +107,7 @@ $env:GAOKAO_DB_PASSWORD = "<你的本地密码>"
 
 ## 已完成的正式 Function Call
 
-当前正式注册并可被 agent 调用的 function call 一共 27 个。注册入口是 [scripts/retrieval_function_registry.py](scripts/retrieval_function_registry.py)，真实实现是 [scripts/retrieval_tools.py](scripts/retrieval_tools.py)。
+当前正式注册并可被 agent 调用的 function call 一共 30 个。兼容 CLI 入口是 [scripts/retrieval_function_registry.py](scripts/retrieval_function_registry.py)，真实注册实现是 [src/major_intel/function_calls/registry.py](src/major_intel/function_calls/registry.py)，真实检索实现是 [src/major_intel/function_calls/retrieval_tools.py](src/major_intel/function_calls/retrieval_tools.py)。
 
 | 工具 | 作用 | 当前口径 |
 |---|---|---|
