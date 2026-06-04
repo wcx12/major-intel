@@ -307,6 +307,42 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(result["normalized_slots"]["major_code"], "100201K")
         self.assertIn("同名专业存在多个层次", result["warnings"][0])
 
+    def test_major_lookup_exposes_cross_level_resolution_metadata(self):
+        specialist = {
+            **MAJOR,
+            "special_id": "520101",
+            "code": "520101",
+            "special_name": "ClinicalMedicine",
+            "type_name": "Specialist",
+            "level2_name": "Medicine",
+            "degree": "",
+        }
+        undergraduate = {
+            **MAJOR,
+            "special_id": "100201K",
+            "code": "100201K",
+            "special_name": "ClinicalMedicine",
+            "type_name": "Undergraduate",
+            "level2_name": "Medicine",
+            "degree": "Bachelor",
+        }
+        tools = RetrievalTools(FakeClient([("FROM edu_major", [specialist, undergraduate])]))
+
+        result = tools.major_lookup("ClinicalMedicine")
+
+        resolution = result["data"]["major_resolution"]
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(resolution["selected_code"], "100201K")
+        self.assertEqual(resolution["selected_name"], "ClinicalMedicine")
+        self.assertEqual(resolution["selected_level_rank"], 0)
+        self.assertEqual(resolution["candidate_count"], 2)
+        self.assertTrue(resolution["cross_level_candidates"])
+        self.assertTrue(resolution["same_name_cross_level"])
+        self.assertEqual(
+            {item["level_rank"]: item["count"] for item in resolution["candidate_level_summary"]},
+            {0: 1, 2: 1},
+        )
+
     def test_major_profile_keeps_clarification_candidates_wide(self):
         electronic_info = {
             **MAJOR,
@@ -1062,6 +1098,103 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(result["status"], "needs_clarification")
         self.assertEqual(result["needs_clarification"], ["subject_type"])
 
+    def test_score_to_rank_defaults_to_comprehensive_for_3plus3_province(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("score_rank_subject_mode_for_province", [{"year": "2025", "subject_type": "综合"}]),
+                    (
+                        "AND score = 620",
+                        [
+                            {
+                                "province_id": "33",
+                                "year": "2025",
+                                "subject_type": "综合",
+                                "score": "620",
+                                "same_count": "893",
+                                "highest_rank": "31222",
+                                "lowest_rank": "32114",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.score_to_rank(province="浙江", subject_type="", score=620, year=2025)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["normalized_slots"]["subject_mode"], "3+3")
+        self.assertEqual(result["normalized_slots"]["rank_subject_type"], "综合")
+        self.assertEqual(result["normalized_slots"]["matched_subject_type"], "综合")
+        self.assertEqual(result["data"]["rank_range"]["lowest_rank"], 32114)
+        self.assertIn("subject_type IN ('综合')", tools.client.queries[-1])
+
+    def test_score_to_rank_treats_physics_as_selected_subject_in_3plus3_province(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("score_rank_subject_mode_for_province", [{"year": "2025", "subject_type": "综合"}]),
+                    (
+                        "AND score = 620",
+                        [
+                            {
+                                "province_id": "33",
+                                "year": "2025",
+                                "subject_type": "综合",
+                                "score": "620",
+                                "same_count": "893",
+                                "highest_rank": "31222",
+                                "lowest_rank": "32114",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.score_to_rank(province="浙江", subject_type="物理", score=620, year=2025)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["normalized_slots"]["subject_mode"], "3+3")
+        self.assertEqual(result["normalized_slots"]["rank_subject_type"], "综合")
+        self.assertEqual(result["normalized_slots"]["selected_subjects"], ["物理"])
+        self.assertEqual(result["normalized_slots"]["matched_subject_type"], "综合")
+        self.assertIn("选考科目", "；".join(result["warnings"]))
+        self.assertIn("subject_type IN ('综合')", tools.client.queries[-1])
+
+    def test_score_to_rank_rejects_unknown_subject_in_3plus3_province(self):
+        tools = RetrievalTools(
+            FakeClient([("score_rank_subject_mode_for_province", [{"year": "2025", "subject_type": "综合"}])])
+        )
+
+        result = tools.score_to_rank(province="浙江", subject_type="火星科", score=620, year=2025)
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["subject_type"])
+        self.assertEqual(result["normalized_slots"]["subject_mode"], "3+3")
+        self.assertTrue(all("AND score = 620" not in query for query in tools.client.queries))
+
+    def test_score_to_rank_requires_track_for_3plus12_province_without_subject(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    (
+                        "score_rank_subject_mode_for_province",
+                        [{"year": "2025", "subject_type": "历史"}, {"year": "2025", "subject_type": "物理"}],
+                    )
+                ]
+            )
+        )
+
+        result = tools.score_to_rank(province="广东", subject_type="", score=580, year=2025)
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["subject_type"])
+        self.assertEqual(result["normalized_slots"]["subject_mode"], "3+1+2")
+        self.assertEqual(result["normalized_slots"]["available_subject_types"], ["历史", "物理"])
+        self.assertTrue(all("AND score = 580" not in query for query in tools.client.queries))
+
     def test_score_to_rank_returns_rank_range(self):
         tools = RetrievalTools(
             FakeClient(
@@ -1120,6 +1253,55 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertIn("subject_type IN ('理科', '物理')", tools.client.queries[-1])
         self.assertIn("已按本地一分一段表命中的科类", result["warnings"][0])
 
+    def test_score_to_rank_rejects_non_integral_score(self):
+        tools = RetrievalTools(FakeClient([]))
+
+        result = tools.score_to_rank(province="浙江", subject_type="综合", score="620.9", year=2025)
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["score"])
+        self.assertIn("整数", result["warnings"][0])
+        self.assertEqual(tools.client.queries, [])
+
+    def test_score_to_rank_warns_when_exact_score_key_has_multiple_batches(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    (
+                        "FROM edu_score_rank",
+                        [
+                            {
+                                "province_id": "11",
+                                "year": "2021",
+                                "subject_type": "综合",
+                                "score": "119",
+                                "same_count": "1",
+                                "highest_rank": "42032",
+                                "lowest_rank": "42032",
+                                "batch_type": "undergraduate",
+                            },
+                            {
+                                "province_id": "11",
+                                "year": "2021",
+                                "subject_type": "综合",
+                                "score": "119",
+                                "same_count": "976",
+                                "highest_rank": "2633",
+                                "lowest_rank": "3608",
+                                "batch_type": "vocational",
+                            },
+                        ],
+                    )
+                ]
+            )
+        )
+
+        result = tools.score_to_rank(province="北京", subject_type="综合", score=119, year=2021)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["rank_range"]["lowest_rank"], 42032)
+        self.assertIn("批次", result["warnings"][0])
+
     def test_rank_to_school_match_requires_rank_or_score(self):
         tools = RetrievalTools(FakeClient([]))
 
@@ -1127,6 +1309,68 @@ class RetrievalToolsTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "needs_clarification")
         self.assertEqual(result["needs_clarification"], ["rank_or_score"])
+
+    def test_rank_to_school_match_defaults_direct_rank_to_comprehensive_for_3plus3(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("score_rank_subject_mode_for_province", [{"year": "2025", "subject_type": "综合"}]),
+                    (
+                        "FROM edu_school_admission_stats a",
+                        [
+                            {
+                                "province_name": "浙江",
+                                "school_id": "10001",
+                                "school_name": "综合大学",
+                                "school_province_name": "浙江",
+                                "city_name": "杭州市",
+                                "is985": "0",
+                                "is211": "0",
+                                "is_dual_class": "0",
+                                "subject_type": "综合",
+                                "year": "2024",
+                                "stable_score": "620",
+                                "stable_rank": "33000",
+                                "chong_score": "615",
+                                "chong_rank": "36000",
+                                "bao_score": "625",
+                                "bao_rank": "27000",
+                                "batch": "本科批",
+                                "representative_major_name": "",
+                                "row_scope": "school_level",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.rank_to_school_match(province="浙江", subject_type=None, rank=30000, year=2025)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["normalized_slots"]["subject_mode"], "3+3")
+        self.assertEqual(result["normalized_slots"]["rank_subject_type"], "综合")
+        self.assertEqual(result["data"]["buckets"]["stable"][0]["school_name"], "综合大学")
+        self.assertIn("a.subject_type = '综合'", tools.client.queries[-1])
+
+    def test_rank_to_school_match_requires_track_for_3plus12_direct_rank(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    (
+                        "score_rank_subject_mode_for_province",
+                        [{"year": "2025", "subject_type": "历史"}, {"year": "2025", "subject_type": "物理"}],
+                    )
+                ]
+            )
+        )
+
+        result = tools.rank_to_school_match(province="广东", subject_type=None, rank=30000, year=2025)
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["subject_type"])
+        self.assertEqual(result["normalized_slots"]["subject_mode"], "3+1+2")
+        self.assertTrue(all("FROM edu_school_admission_stats a" not in query for query in tools.client.queries))
 
     def test_rank_to_school_match_uses_score_rank_and_latest_available_history(self):
         tools = RetrievalTools(
@@ -1314,6 +1558,112 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertEqual(missing_rank["status"], "needs_clarification")
         self.assertEqual(missing_rank["needs_clarification"], ["rank_or_score"])
 
+    def test_rank_to_major_match_rejects_non_positive_rank(self):
+        tools = RetrievalTools(FakeClient([]))
+
+        zero_rank = tools.rank_to_major_match(
+            province="TestProvince",
+            subject_type="Comprehensive",
+            major_text="ComputerScience",
+            rank=0,
+            limit=10,
+        )
+        negative_rank = tools.rank_to_major_match(
+            province="TestProvince",
+            subject_type="Comprehensive",
+            major_text="ComputerScience",
+            rank=-1,
+            limit=10,
+        )
+
+        self.assertEqual(zero_rank["status"], "needs_clarification")
+        self.assertEqual(zero_rank["needs_clarification"], ["rank"])
+        self.assertEqual(negative_rank["status"], "needs_clarification")
+        self.assertEqual(negative_rank["needs_clarification"], ["rank"])
+        self.assertEqual(tools.client.queries, [])
+
+    def test_rank_to_major_match_rejects_non_positive_limit(self):
+        tools = RetrievalTools(FakeClient([]))
+
+        zero_limit = tools.rank_to_major_match(
+            province="TestProvince",
+            subject_type="Comprehensive",
+            major_text="ComputerScience",
+            rank=50000,
+            limit=0,
+        )
+        negative_limit = tools.rank_to_major_match(
+            province="TestProvince",
+            subject_type="Comprehensive",
+            major_text="ComputerScience",
+            rank=50000,
+            limit=-5,
+        )
+
+        self.assertEqual(zero_limit["status"], "needs_clarification")
+        self.assertEqual(zero_limit["needs_clarification"], ["limit"])
+        self.assertEqual(negative_limit["status"], "needs_clarification")
+        self.assertEqual(negative_limit["needs_clarification"], ["limit"])
+        self.assertEqual(tools.client.queries, [])
+
+    def test_rank_to_major_match_accepts_numeric_string_limit(self):
+        major = {
+            **MAJOR,
+            "special_id": "080901",
+            "code": "080901",
+            "special_name": "ComputerScience",
+            "degree": "Bachelor",
+        }
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_major", [major]),
+                    (
+                        "FROM edu_school_admission_stats a",
+                        [
+                            {
+                                "province_name": "TestProvince",
+                                "school_id": "10001",
+                                "school_name": "Stable University",
+                                "school_province_name": "TestRegion",
+                                "city_name": "TestCity",
+                                "is985": "0",
+                                "is211": "0",
+                                "is_dual_class": "0",
+                                "major_code": "080901",
+                                "major_name": "ComputerScience",
+                                "subject_type": "Comprehensive",
+                                "year": "2025",
+                                "stable_score": "600",
+                                "stable_rank": "52000",
+                                "chong_score": "590",
+                                "chong_rank": "65000",
+                                "bao_score": "610",
+                                "bao_rank": "40000",
+                                "batch": "Undergraduate",
+                                "subject_requirement": "",
+                                "plan_count": "4",
+                                "admission_count": "4",
+                                "remark": "",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.rank_to_major_match(
+            province="TestProvince",
+            subject_type="Comprehensive",
+            major_text="ComputerScience",
+            rank=50000,
+            limit="5",
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["coverage"]["returned_major_rows"], 1)
+        self.assertEqual(result["input"]["limit"], 5)
+
     def test_rank_to_major_match_uses_major_alias_score_rank_and_history(self):
         tools = RetrievalTools(
             FakeClient(
@@ -1440,6 +1790,182 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertIn("a.major_code = '080901'", tools.client.queries[-1])
         self.assertIn("a.year <= 2025", tools.client.queries[-1])
 
+    def test_rank_to_major_match_preserves_major_resolution_metadata_and_warnings(self):
+        specialist = {
+            **MAJOR,
+            "special_id": "520101",
+            "code": "520101",
+            "special_name": "ClinicalMedicine",
+            "type_name": "Specialist",
+            "level2_name": "Medicine",
+            "degree": "",
+        }
+        undergraduate = {
+            **MAJOR,
+            "special_id": "100201K",
+            "code": "100201K",
+            "special_name": "ClinicalMedicine",
+            "type_name": "Undergraduate",
+            "level2_name": "Medicine",
+            "degree": "Bachelor",
+        }
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_major", [specialist, undergraduate]),
+                    (
+                        "FROM edu_school_admission_stats a",
+                        [
+                            {
+                                "province_name": "TestProvince",
+                                "school_id": "10001",
+                                "school_name": "Stable University",
+                                "school_province_name": "TestRegion",
+                                "city_name": "TestCity",
+                                "is985": "0",
+                                "is211": "0",
+                                "is_dual_class": "0",
+                                "major_code": "100201K",
+                                "major_name": "ClinicalMedicine",
+                                "subject_type": "Comprehensive",
+                                "year": "2025",
+                                "stable_score": "600",
+                                "stable_rank": "52000",
+                                "chong_score": "590",
+                                "chong_rank": "65000",
+                                "bao_score": "610",
+                                "bao_rank": "40000",
+                                "batch": "Undergraduate",
+                                "subject_requirement": "",
+                                "plan_count": "4",
+                                "admission_count": "4",
+                                "remark": "",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.rank_to_major_match(
+            province="TestProvince",
+            subject_type="Comprehensive",
+            major_text="ClinicalMedicine",
+            rank=50000,
+            limit=10,
+        )
+
+        resolution = result["data"]["major_resolution"]
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(resolution["selected_code"], "100201K")
+        self.assertTrue(resolution["cross_level_candidates"])
+        self.assertTrue(result["warnings"])
+        self.assertEqual(result["data"]["buckets"]["stable"][0]["school_name"], "Stable University")
+
+    def test_rank_to_major_match_preserves_major_resolution_when_history_missing(self):
+        specialist = {
+            **MAJOR,
+            "special_id": "520101",
+            "code": "520101",
+            "special_name": "ClinicalMedicine",
+            "type_name": "Specialist",
+            "level2_name": "Medicine",
+            "degree": "",
+        }
+        undergraduate = {
+            **MAJOR,
+            "special_id": "100201K",
+            "code": "100201K",
+            "special_name": "ClinicalMedicine",
+            "type_name": "Undergraduate",
+            "level2_name": "Medicine",
+            "degree": "Bachelor",
+        }
+        tools = RetrievalTools(FakeClient([("FROM edu_major", [specialist, undergraduate])]))
+
+        result = tools.rank_to_major_match(
+            province="TestProvince",
+            subject_type="Comprehensive",
+            major_text="ClinicalMedicine",
+            rank=50000,
+            limit=10,
+        )
+
+        resolution = result["data"]["major_resolution"]
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(resolution["selected_code"], "100201K")
+        self.assertTrue(resolution["cross_level_candidates"])
+
+    def test_rank_to_major_match_preserves_selected_subjects_for_3plus3_score(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_major", [MAJOR]),
+                    ("score_rank_subject_mode_for_province", [{"year": "2025", "subject_type": "综合"}]),
+                    (
+                        "AND score = 620",
+                        [
+                            {
+                                "province_id": "33",
+                                "year": "2025",
+                                "subject_type": "综合",
+                                "score": "620",
+                                "same_count": "893",
+                                "highest_rank": "31222",
+                                "lowest_rank": "32114",
+                            }
+                        ],
+                    ),
+                    (
+                        "FROM edu_school_admission_stats a",
+                        [
+                            {
+                                "province_name": "浙江",
+                                "school_id": "10336",
+                                "school_name": "杭州电子科技大学",
+                                "school_province_name": "浙江",
+                                "city_name": "杭州市",
+                                "is985": "0",
+                                "is211": "0",
+                                "is_dual_class": "0",
+                                "major_code": "080901",
+                                "major_name": "计算机科学与技术",
+                                "subject_type": "综合",
+                                "year": "2024",
+                                "stable_score": "620",
+                                "stable_rank": "33000",
+                                "chong_score": "615",
+                                "chong_rank": "36000",
+                                "bao_score": "625",
+                                "bao_rank": "27000",
+                                "batch": "本科批",
+                                "subject_requirement": "物理,化学",
+                                "plan_count": "20",
+                                "admission_count": "20",
+                                "remark": "",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.rank_to_major_match(
+            province="浙江",
+            subject_type="物理",
+            major_text="计科",
+            score=620,
+            year=2025,
+            limit=10,
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["normalized_slots"]["subject_mode"], "3+3")
+        self.assertEqual(result["normalized_slots"]["rank_subject_type"], "综合")
+        self.assertEqual(result["normalized_slots"]["selected_subjects"], ["物理"])
+        self.assertEqual(result["data"]["buckets"]["stable"][0]["school_name"], "杭州电子科技大学")
+        self.assertIn("a.subject_type = '综合'", tools.client.queries[-1])
+
     def test_specialty_group_lookup_returns_group_and_all_group_majors(self):
         tools = RetrievalTools(
             FakeClient(
@@ -1495,6 +2021,334 @@ class RetrievalToolsTests(unittest.TestCase):
         self.assertIn("g.year = 2025", tools.client.queries[-1])
         self.assertIn("gm_filter.special_code = '080901'", tools.client.queries[-1])
         self.assertIn("专业组样本", result["scope_notes"][0])
+
+    def test_specialty_group_lookup_rejects_non_positive_limit(self):
+        tools = RetrievalTools(FakeClient([]))
+
+        result = tools.specialty_group_lookup(
+            school_text="杭州电子科技大学",
+            province="浙江",
+            subject_type="综合",
+            year=2025,
+            limit=0,
+        )
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["limit"])
+        self.assertEqual(result["data"]["school"], {})
+        self.assertEqual(result["data"]["major"], {})
+        self.assertEqual(result["data"]["groups"], [])
+        self.assertEqual(tools.client.queries, [])
+
+    def test_specialty_group_lookup_limit_caps_groups_not_group_major_rows(self):
+        large_group_rows = [
+            {
+                "group_db_id": "g1",
+                "year": "2025",
+                "province": "33",
+                "group_code": "001",
+                "group_name": "物理化学组",
+                "group_type": "综合",
+                "special_code": f"0809{i:02d}",
+                "special_name": f"专业{i}",
+            }
+            for i in range(1, 4)
+        ]
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("specialty_group_lookup_matched_groups", large_group_rows),
+                ]
+            )
+        )
+
+        result = tools.specialty_group_lookup(
+            school_text="杭州电子科技大学",
+            province="浙江",
+            subject_type="综合",
+            year=2025,
+            limit=1,
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(result["data"]["groups"]), 1)
+        self.assertEqual(len(result["data"]["groups"][0]["majors"]), 3)
+        self.assertNotIn("LIMIT 100", tools.client.queries[-1])
+        self.assertIn("LIMIT 1", tools.client.queries[-1])
+
+    def test_specialty_group_lookup_overbroad_school_query_needs_clarification(self):
+        peking = {
+            **SCHOOL,
+            "school_id": "10001",
+            "code": "10001",
+            "name": "北京大学",
+        }
+        tsinghua = {
+            **SCHOOL,
+            "school_id": "10003",
+            "code": "10003",
+            "name": "清华大学",
+        }
+
+        class SchoolLimitAwareClient(FakeClient):
+            def query(self, sql):
+                self.queries.append(sql)
+                if "FROM edu_university" in sql and "LIMIT 5" in sql:
+                    return [peking, tsinghua]
+                if "FROM edu_university" in sql:
+                    return [peking]
+                return []
+
+        tools = RetrievalTools(SchoolLimitAwareClient([]))
+
+        result = tools.specialty_group_lookup(
+            school_text="大学",
+            province="浙江",
+            subject_type="综合",
+            year=2025,
+        )
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["school_text"])
+        self.assertEqual(result["data"]["school"], {})
+        self.assertEqual(result["data"]["groups"], [])
+        self.assertEqual({candidate["name"] for candidate in result["data"]["school_candidates"]}, {"北京大学", "清华大学"})
+
+    def test_specialty_group_lookup_keeps_envelope_when_major_lookup_fails(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_university", [SCHOOL])]))
+
+        result = tools.specialty_group_lookup(
+            school_text="杭州电子科技大学",
+            major_text="火星工程",
+            province="浙江",
+            subject_type="综合",
+            year=2025,
+        )
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertEqual(result["data"]["school"]["name"], "杭州电子科技大学")
+        self.assertEqual(result["data"]["major"], {})
+        self.assertEqual(result["data"]["groups"], [])
+        self.assertIn("major_candidates", result["data"])
+
+    def test_specialty_group_lookup_returns_partial_when_context_is_missing(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    (
+                        "specialty_group_lookup_matched_groups",
+                        [
+                            {
+                                "group_db_id": "g1",
+                                "year": "2025",
+                                "province": "33",
+                                "group_code": "001",
+                                "group_name": "物理化学组",
+                                "group_type": "综合",
+                                "special_code": "080901",
+                                "special_name": "计算机科学与技术",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.specialty_group_lookup(school_text="杭州电子科技大学", limit=5)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["needs_clarification"], ["province", "subject_type", "year"])
+        self.assertEqual(result["data"]["groups"][0]["group_code"], "001")
+
+    def test_specialty_group_lookup_keeps_reasonable_fuzzy_school_match(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    (
+                        "specialty_group_lookup_matched_groups",
+                        [
+                            {
+                                "group_db_id": "g1",
+                                "year": "2025",
+                                "province": "33",
+                                "group_code": "001",
+                                "group_name": "物理化学组",
+                                "group_type": "综合",
+                                "special_code": "080901",
+                                "special_name": "计算机科学与技术",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.specialty_group_lookup(
+            school_text="杭州电子",
+            province="浙江",
+            subject_type="综合",
+            year=2025,
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["school"]["name"], "杭州电子科技大学")
+        self.assertEqual(result["data"]["groups"][0]["group_code"], "001")
+
+    def test_specialty_group_lookup_keeps_official_code_priority_for_numeric_school_text(self):
+        shanxi = {
+            **SCHOOL,
+            "school_id": "10128",
+            "code": "10108",
+            "name": "山西大学",
+        }
+        taiyuan = {
+            **SCHOOL,
+            "school_id": "10108",
+            "code": "10112",
+            "name": "太原理工大学",
+        }
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [shanxi, taiyuan]),
+                    ("FROM edu_major", [MAJOR]),
+                    (
+                        "specialty_group_lookup_matched_groups",
+                        [
+                            {
+                                "group_db_id": "g1",
+                                "year": "2025",
+                                "province": "32",
+                                "group_code": "02",
+                                "group_name": "山西大学-02组",
+                                "group_type": "物理",
+                                "special_code": "080901",
+                                "special_name": "计算机科学与技术",
+                            }
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.specialty_group_lookup(
+            school_text="10108",
+            major_text="计科",
+            province="江苏",
+            subject_type="物理",
+            year=2025,
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["data"]["school"]["name"], "山西大学")
+        self.assertIn("g.school_id = '10128'", tools.client.queries[-1])
+
+    def test_specialty_group_lookup_keeps_subject_type_and_group_code_strict(self):
+        tools = RetrievalTools(FakeClient([("FROM edu_university", [SCHOOL])]))
+
+        result = tools.specialty_group_lookup(
+            school_text="杭州电子科技大学",
+            province="浙江",
+            subject_type="理科",
+            year=2025,
+            group_code="001",
+        )
+
+        self.assertEqual(result["status"], "not_found")
+        self.assertIn("g.group_type = '理科'", tools.client.queries[-1])
+        self.assertIn("g.group_code = '001'", tools.client.queries[-1])
+        self.assertNotIn("g.group_type = '物理'", tools.client.queries[-1])
+
+    def test_specialty_group_lookup_preserves_same_major_rows_with_different_remarks(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    ("FROM edu_major", [MAJOR]),
+                    (
+                        "specialty_group_lookup_matched_groups",
+                        [
+                            {
+                                "group_db_id": "g1",
+                                "year": "2025",
+                                "province": "33",
+                                "group_code": "001",
+                                "group_name": "物理化学组",
+                                "group_type": "综合",
+                                "special_code": "080901",
+                                "special_name": "计算机科学与技术",
+                                "remark": "普通方向",
+                            },
+                            {
+                                "group_db_id": "g1",
+                                "year": "2025",
+                                "province": "33",
+                                "group_code": "001",
+                                "group_name": "物理化学组",
+                                "group_type": "综合",
+                                "special_code": "080901",
+                                "special_name": "计算机科学与技术",
+                                "remark": "试验班",
+                            },
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.specialty_group_lookup(
+            school_text="杭州电子科技大学",
+            major_text="计科",
+            province="浙江",
+            subject_type="综合",
+            year=2025,
+        )
+
+        majors = result["data"]["groups"][0]["majors"]
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(len(majors), 2)
+        self.assertEqual({major["remark"] for major in majors}, {"普通方向", "试验班"})
+
+    def test_specialty_group_lookup_does_not_merge_groups_that_only_differ_by_group_type(self):
+        tools = RetrievalTools(
+            FakeClient(
+                [
+                    ("FROM edu_university", [SCHOOL]),
+                    (
+                        "specialty_group_lookup_matched_groups",
+                        [
+                            {
+                                "group_db_id": "physics-group",
+                                "year": "2025",
+                                "province": "33",
+                                "group_code": "001",
+                                "group_name": "001组",
+                                "group_type": "物理",
+                                "special_code": "080901",
+                                "special_name": "计算机科学与技术",
+                            },
+                            {
+                                "group_db_id": "history-group",
+                                "year": "2025",
+                                "province": "33",
+                                "group_code": "001",
+                                "group_name": "001组",
+                                "group_type": "历史",
+                                "special_code": "050101",
+                                "special_name": "汉语言文学",
+                            },
+                        ],
+                    ),
+                ]
+            )
+        )
+
+        result = tools.specialty_group_lookup(school_text="杭州电子科技大学", province="浙江", year=2025)
+
+        self.assertEqual(len(result["data"]["groups"]), 2)
 
     def test_subject_requirement_lookup_collects_distinct_requirements(self):
         tools = RetrievalTools(
@@ -2041,9 +2895,11 @@ class RetrievalToolsTests(unittest.TestCase):
             available_fields=["school_basic", "major_basic", "subject_eval"],
         )
 
-        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["status"], "partial")
         self.assertIn("校专业级薪资分布", result["data"]["missing_items"])
         self.assertIn("转专业政策", result["data"]["missing_items"])
+        self.assertTrue(result["data"]["gap_items"])
+        self.assertTrue(any(item["gap_key"] == "transfer_policy" for item in result["data"]["gap_items"]))
 
     def test_data_gap_detection_rejects_unknown_question_type(self):
         tools = RetrievalTools(FakeClient([]))

@@ -1,0 +1,194 @@
+{
+  "metadata": {
+    "description": "Manual score_to_rank boundary cases. The evaluator augments these with live database-derived cases.",
+    "version": 1
+  },
+  "cases": [
+    {
+      "id": "manual_zhejiang_2025_comprehensive_620_ok",
+      "category": "happy_path",
+      "province": "浙江",
+      "subject_type": "综合",
+      "score": 620,
+      "year": 2025,
+      "question": "2025年浙江综合620分对应多少位次？"
+    },
+    {
+      "id": "manual_zhejiang_comprehensive_620_latest_year",
+      "category": "latest_year_fallback",
+      "province": "浙江",
+      "subject_type": "综合",
+      "score": 620,
+      "question": "浙江综合620分对应多少位次？",
+      "allow_ambiguous_ok": true
+    },
+    {
+      "id": "manual_zhejiang_2025_comprehensive_700_score_gap",
+      "category": "score_gap_inside_range",
+      "province": "浙江",
+      "subject_type": "综合",
+      "score": 700,
+      "year": 2025,
+      "question": "2025年浙江综合700分对应多少位次？"
+    },
+    {
+      "id": "manual_zhejiang_2025_comprehensive_268_min",
+      "category": "min_score",
+      "province": "浙江",
+      "subject_type": "综合",
+      "score": 268,
+      "year": 2025,
+      "question": "2025年浙江综合268分对应多少位次？"
+    },
+    {
+      "id": "manual_zhejiang_2025_comprehensive_750_max",
+      "category": "max_score",
+      "province": "浙江",
+      "subject_type": "综合",
+      "score": 750,
+      "year": 2025,
+      "question": "2025年浙江综合750分对应多少位次？"
+    },
+    {
+      "id": "manual_zhejiang_2026_comprehensive_620_future_year",
+      "category": "future_year",
+      "province": "浙江",
+      "subject_type": "综合",
+      "score": 620,
+      "year": 2026,
+      "question": "2026年浙江综合620分对应多少位次？"
+    },
+    {
+      "id": "manual_zhejiang_history_620_selected_subject",
+      "category": "selected_subject_3plus3",
+      "province": "浙江",
+      "subject_type": "历史",
+      "score": 620,
+      "year": 2025,
+      "question": "2025年浙江历史620分对应多少位次？"
+    },
+    {
+      "id": "manual_zhejiang_620_missing_subject_auto_comprehensive",
+      "category": "missing_subject_3plus3",
+      "province": "浙江",
+      "score": 620,
+      "year": 2025,
+      "question": "2025年浙江620分对应多少位次？"
+    },
+    {
+      "id": "manual_zhejiang_physics_620_selected_subject",
+      "category": "selected_subject_3plus3",
+      "province": "浙江",
+      "subject_type": "物理",
+      "score": 620,
+      "year": 2025,
+      "question": "2025年浙江物理620分对应多少位次？"
+    },
+    {
+      "id": "manual_zhejiang_chemistry_620_selected_subject",
+      "category": "selected_subject_3plus3",
+      "province": "浙江",
+      "subject_type": "化学",
+      "score": 620,
+      "year": 2025,
+      "question": "2025年浙江化学620分对应多少位次？"
+    },
+    {
+      "id": "manual_zhejiang_province_suffix_missing_subject",
+      "category": "province_suffix_3plus3",
+      "province": "浙江省",
+      "score": 620,
+      "year": 2025,
+      "question": "2025年浙江省620分对应多少位次？"
+    },
+    {
+      "id": "manual_guangdong_580_missing_subject_needs_track",
+      "category": "missing_subject_3plus12",
+      "province": "广东",
+      "score": 580,
+      "year": 2025,
+      "question": "2025年广东580分对应多少位次？"
+    },
+    {
+      "id": "manual_guangdong_chemistry_580_needs_track",
+      "category": "selected_subject_without_track_3plus12",
+      "province": "广东",
+      "subject_type": "化学",
+      "score": 580,
+      "year": 2025,
+      "question": "2025年广东化学580分对应多少位次？"
+    },
+    {
+      "id": "manual_henan_2024_physics_alias_to_science",
+      "category": "traditional_year_new_track_alias",
+      "province": "河南",
+      "subject_type": "物理",
+      "score": 465,
+      "year": 2024,
+      "question": "2024年河南物理465分对应多少位次？"
+    },
+    {
+      "id": "manual_henan_2024_missing_subject_needs_track",
+      "category": "missing_subject_traditional",
+      "province": "河南",
+      "score": 465,
+      "year": 2024,
+      "question": "2024年河南465分对应多少位次？"
+    },
+    {
+      "id": "manual_xinjiang_2025_missing_subject_needs_track",
+      "category": "missing_subject_traditional",
+      "province": "新疆",
+      "score": 465,
+      "year": 2025,
+      "question": "2025年新疆465分对应多少位次？"
+    },
+    {
+      "id": "manual_henan_2025_science_465_alias",
+      "category": "legacy_subject_alias",
+      "province": "河南",
+      "subject_type": "理科",
+      "score": 465,
+      "year": 2025,
+      "question": "2025年河南理科465分对应多少位次？",
+      "allow_ambiguous_ok": true
+    },
+    {
+      "id": "manual_henan_science_465_latest_subject_priority",
+      "category": "latest_year_subject_priority",
+      "province": "河南",
+      "subject_type": "理科",
+      "score": 465,
+      "question": "河南理科465分对应多少位次？",
+      "allow_ambiguous_ok": true
+    },
+    {
+      "id": "manual_beijing_2021_comprehensive_119_duplicate_batch",
+      "category": "duplicate_batch_key",
+      "province": "北京",
+      "subject_type": "综合",
+      "score": 119,
+      "year": 2021,
+      "question": "2021年北京综合119分对应多少位次？",
+      "allow_ambiguous_ok": true
+    },
+    {
+      "id": "manual_zhejiang_2025_comprehensive_decimal",
+      "category": "invalid_score",
+      "province": "浙江",
+      "subject_type": "综合",
+      "score": "620.9",
+      "year": 2025,
+      "question": "2025年浙江综合620.9分对应多少位次？"
+    },
+    {
+      "id": "manual_zhejiang_2025_comprehensive_chinese_score",
+      "category": "invalid_score",
+      "province": "浙江",
+      "subject_type": "综合",
+      "score": "六百二十",
+      "year": 2025,
+      "question": "2025年浙江综合六百二十分对应多少位次？"
+    }
+  ]
+}

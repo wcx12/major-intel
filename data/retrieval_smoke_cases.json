@@ -574,22 +574,51 @@
       "id_prefix": "data_gap_detection",
       "tool": "data_gap_detection",
       "category": "data_gap",
-      "target_status": "ok",
-      "allowed_statuses": ["ok"],
-      "expected_data_keys": ["missing_items"],
+      "allowed_statuses": ["ok", "partial", "needs_clarification"],
+      "expected_data_keys": ["missing_items", "gap_items"],
       "args_list": [
-        {"id_suffix": "school_major_none", "args": {"question_type": "school_major_profile"}},
-        {"id_suffix": "school_major_basic", "args": {"question_type": "school_major_profile", "available_fields": ["school_basic", "major_basic"]}},
-        {"id_suffix": "school_major_with_relation", "args": {"question_type": "school_major_profile", "available_fields": ["school_basic", "major_basic", "school_major", "subject_eval"]}},
-        {"id_suffix": "school_major_market_known", "args": {"question_type": "school_major_profile", "available_fields": ["school_basic", "major_basic", "school_major", "school_major_salary", "school_major_regions", "top_companies"]}},
-        {"id_suffix": "market_none", "args": {"question_type": "major_market_reference"}},
-        {"id_suffix": "market_snapshot", "args": {"question_type": "major_market_reference", "available_fields": ["market_snapshot"]}},
-        {"id_suffix": "market_all", "args": {"question_type": "major_market_reference", "available_fields": ["market_snapshot", "job_samples", "official_employment"]}},
-        {"id_suffix": "civil_none", "args": {"question_type": "civil_service_role_search"}},
-        {"id_suffix": "civil_candidates", "args": {"question_type": "civil_service_role_search", "available_fields": ["role_candidates"]}},
-        {"id_suffix": "civil_all", "args": {"question_type": "civil_service_role_search", "available_fields": ["role_candidates", "official_role_table", "manual_mapping"]}},
-        {"id_suffix": "unknown_type", "args": {"question_type": "unknown_question_type"}},
-        {"id_suffix": "school_major_full", "args": {"question_type": "school_major_profile", "available_fields": ["school_basic", "major_basic", "school_major", "subject_eval", "school_major_salary", "school_major_regions", "top_companies", "civil_service_mapping", "transfer_policy", "streaming_ratio", "official_major_intro"]}}
+        {"id_suffix": "school_major_none", "args": {"question_type": "school_major_profile"}, "target_status": "partial"},
+        {"id_suffix": "school_major_basic", "args": {"question_type": "school_major_profile", "available_fields": ["school_basic", "major_basic"]}, "target_status": "partial"},
+        {"id_suffix": "school_major_with_relation", "args": {"question_type": "school_major_profile", "available_fields": ["school_basic", "major_basic", "school_major", "subject_eval"]}, "target_status": "partial"},
+        {"id_suffix": "school_major_market_known", "args": {"question_type": "school_major_profile", "available_fields": ["school_basic", "major_basic", "school_major", "school_major_salary", "school_major_regions", "top_companies"]}, "target_status": "partial"},
+        {"id_suffix": "market_none", "args": {"question_type": "major_market_reference"}, "target_status": "partial"},
+        {"id_suffix": "market_snapshot", "args": {"question_type": "major_market_reference", "available_fields": ["market_snapshot"]}, "target_status": "partial"},
+        {"id_suffix": "market_all", "args": {"question_type": "major_market_reference", "available_fields": ["market_snapshot", "job_samples", "official_employment"]}, "target_status": "ok"},
+        {"id_suffix": "civil_none", "args": {"question_type": "civil_service_role_search"}, "target_status": "partial"},
+        {"id_suffix": "civil_candidates", "args": {"question_type": "civil_service_role_search", "available_fields": ["role_candidates"]}, "target_status": "partial"},
+        {"id_suffix": "civil_all", "args": {"question_type": "civil_service_role_search", "available_fields": ["role_candidates", "official_role_table", "manual_mapping"]}, "target_status": "ok"},
+        {"id_suffix": "unknown_type", "args": {"question_type": "unknown_question_type"}, "target_status": "needs_clarification", "expected_data_key_statuses": ["ok", "partial", "needs_clarification"]},
+        {"id_suffix": "school_major_full", "args": {"question_type": "school_major_profile", "available_fields": ["school_basic", "major_basic", "school_major", "subject_eval", "school_major_salary", "school_major_regions", "top_companies", "civil_service_mapping", "transfer_policy", "streaming_ratio", "official_major_intro"]}, "target_status": "ok"}
+      ]
+    },
+    {
+      "id_prefix": "web_evidence_search",
+      "tool": "web_evidence_search",
+      "category": "web_evidence",
+      "target_status": "needs_clarification",
+      "allowed_statuses": ["needs_clarification", "ok", "not_found", "error"],
+      "args_list": [
+        {"id_suffix": "config_missing", "args": {"query": "杭州电子科技大学 招生章程", "limit": 1}}
+      ]
+    },
+    {
+      "id_prefix": "web_evidence_fetch",
+      "tool": "web_evidence_fetch",
+      "category": "web_evidence",
+      "target_status": "needs_clarification",
+      "allowed_statuses": ["needs_clarification", "ok", "partial", "not_found", "error"],
+      "args_list": [
+        {"id_suffix": "config_missing", "args": {"query": "上海交通大学 人工智能 本科专业", "limit": 1, "fetch_limit": 1, "evidence_limit": 1}}
+      ]
+    },
+    {
+      "id_prefix": "web_gap_fill",
+      "tool": "web_gap_fill",
+      "category": "web_gap_fill",
+      "target_status": "needs_clarification",
+      "allowed_statuses": ["needs_clarification"],
+      "args_list": [
+        {"id_suffix": "missing_gap_items", "args": {"gap_items_json": "[]"}}
       ]
     }
   ]

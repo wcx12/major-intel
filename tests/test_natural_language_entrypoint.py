@@ -99,6 +99,107 @@ class NaturalLanguageEntryPointTests(unittest.TestCase):
             [("score_to_rank", {"province": "广东", "subject_type": "物理", "score": 580})],
         )
 
+    def test_score_to_rank_3plus3_question_without_subject_delegates_to_tool(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("浙江620分对应多少位次？")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intent"], "score_to_rank")
+        self.assertEqual(dispatcher.calls, [("score_to_rank", {"province": "浙江", "score": 620})])
+
+    def test_rank_question_with_province_without_subject_delegates_subject_mode_to_tool(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("浙江30000位次能上哪些学校？")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intent"], "rank_to_school_match")
+        self.assertEqual(dispatcher.calls, [("rank_to_school_match", {"province": "浙江", "rank": 30000, "limit": 30})])
+
+    def test_score_to_rank_answer_includes_rank_range_year_same_count_and_scope(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        def dispatcher(tool_name, arguments):
+            return tool_result(
+                tool_name,
+                "ok",
+                {**arguments, "year": arguments.get("year")},
+                normalized_slots={
+                    "province": "浙江",
+                    "province_id": "33",
+                    "subject_type": "综合",
+                    "matched_subject_type": "综合",
+                    "year": "2025",
+                },
+                data={
+                    "score": 620,
+                    "same_count": 893,
+                    "rank_range": {"highest_rank": 31222, "lowest_rank": 32114},
+                },
+                scope_notes=["位次优先于分数；分数转位次只在同省、同科类、同年份内有效。"],
+                source_tables=["edu_score_rank"],
+            )
+
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("2025年浙江综合620分对应多少位次？")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("2025", result["answer_markdown"])
+        self.assertIn("31222", result["answer_markdown"])
+        self.assertIn("32114", result["answer_markdown"])
+        self.assertIn("893", result["answer_markdown"])
+        self.assertIn("同省、同科类、同年份", result["answer_markdown"])
+
+    def test_score_to_rank_question_with_two_digit_score_routes_to_score_to_rank(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("2025年天津综合99分对应多少位次？")
+
+        self.assertEqual(result["intent"], "score_to_rank")
+        self.assertEqual(
+            dispatcher.calls,
+            [("score_to_rank", {"province": "天津", "subject_type": "综合", "score": 99, "year": 2025})],
+        )
+
+    def test_score_to_rank_question_with_decimal_score_asks_for_integer_score(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("2025年浙江综合620.9分对应多少位次？")
+
+        self.assertEqual(result["intent"], "score_to_rank")
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["score"])
+        self.assertEqual(dispatcher.calls, [])
+        self.assertIn("分数", result["answer_markdown"])
+
+    def test_score_to_rank_question_with_chinese_score_asks_for_numeric_score(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("2025年浙江综合六百二十分对应多少位次？")
+
+        self.assertEqual(result["intent"], "score_to_rank")
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["score"])
+        self.assertEqual(dispatcher.calls, [])
+        self.assertIn("分数", result["answer_markdown"])
+
     def test_major_market_question_routes_to_market_reference(self):
         from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
 

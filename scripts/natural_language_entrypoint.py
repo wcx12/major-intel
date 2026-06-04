@@ -68,7 +68,7 @@ PROVINCES = [
 ]
 
 
-SUBJECT_TYPES = ["物理", "历史", "综合", "理科", "文科"]
+SUBJECT_TYPES = ["物理", "历史", "综合", "理科", "文科", "化学", "生物", "政治", "思想政治", "地理", "技术"]
 
 
 SCHOOL_ALIASES = {
@@ -254,7 +254,9 @@ def _extract_slots(question: str) -> dict[str, Any]:
     # Treat a plain three-digit number as score only when it is not already
     # consumed as rank.  This handles "广东物理 580" while avoiding "45000 位次".
     if "rank" not in slots:
-        score_match = re.search(r"(?<!\d)([1-7]\d{2})(?:\s*分)?(?!\d)", question)
+        score_match = re.search(r"(?<![\d.])([1-9]\d{2})(?:\s*分)?(?![\d.])", question)
+        if not score_match:
+            score_match = re.search(r"(?<![\d.])(\d{1,2})\s*分(?![\d.])", question)
         if score_match:
             slots["score"] = int(score_match.group(1))
 
@@ -479,11 +481,11 @@ def _looks_like_score_or_rank_question(question: str, slots: dict[str, Any]) -> 
 def _looks_like_score_to_rank_question(question: str, slots: dict[str, Any]) -> bool:
     """Recognize pure score-to-rank conversion before recommendation routing."""
 
-    if not slots.get("score"):
-        return False
     if slots.get("school_text") or slots.get("major_text"):
         return False
-    return any(word in question for word in ["对应多少位次", "多少位次", "位次多少", "换算位次", "排名多少", "排多少名"])
+    if not any(word in question for word in ["对应多少位次", "多少位次", "位次多少", "换算位次", "排名多少", "排多少名"]):
+        return False
+    return bool(slots.get("score") or slots.get("province") or slots.get("subject_type"))
 
 
 def _looks_like_major_market_question(question: str, slots: dict[str, Any]) -> bool:
@@ -503,20 +505,27 @@ def _missing_required_slots(intent: str, slots: dict[str, Any]) -> list[str]:
     """Return missing slots that the entrypoint should ask before tool calls."""
 
     if intent == "rank_to_major_match":
-        required = ["province", "subject_type", "major_text"]
+        required = ["province", "major_text"]
         missing = [slot for slot in required if not slots.get(slot)]
+        if not slots.get("province") and not slots.get("subject_type"):
+            missing.append("subject_type")
         if not slots.get("score") and not slots.get("rank"):
             missing.append("score_or_rank")
         return missing
 
     if intent == "rank_to_school_match":
-        missing = [slot for slot in ["province", "subject_type"] if not slots.get(slot)]
+        missing = [slot for slot in ["province"] if not slots.get(slot)]
+        if not slots.get("province") and not slots.get("subject_type"):
+            missing.append("subject_type")
         if not slots.get("score") and not slots.get("rank"):
             missing.append("score_or_rank")
         return missing
 
     if intent == "score_to_rank":
-        return [slot for slot in ["province", "subject_type", "score"] if not slots.get(slot)]
+        missing = [slot for slot in ["province", "score"] if not slots.get(slot)]
+        if not slots.get("province") and not slots.get("subject_type"):
+            missing.append("subject_type")
+        return missing
 
     if intent == "school_major_profile":
         return [slot for slot in ["school_text", "major_text"] if not slots.get(slot)]
@@ -860,6 +869,7 @@ def _clarification_answer(missing_slots: list[str]) -> str:
     names = {
         "province": "省份",
         "subject_type": "科类",
+        "score": "分数",
         "score_or_rank": "分数或位次",
         "major_text": "专业",
         "school_text": "学校",
@@ -879,6 +889,9 @@ def _answer_summary(
     data_gaps: list[str],
     warnings: list[str],
 ) -> str:
+    if intent == "score_to_rank":
+        return _score_to_rank_answer_summary(status, tool_trace, warnings)
+
     called = "、".join(trace["tool_name"] for trace in tool_trace) or "无"
     parts = [f"已按 `{intent}` 处理，调用工具：{called}。"]
     if status == "partial":
@@ -890,6 +903,52 @@ def _answer_summary(
     if intent == "civil_service_mapping" and CIVIL_SERVICE_MAPPING_WARNING not in warnings:
         parts.append(CIVIL_SERVICE_MAPPING_WARNING)
     return "\n".join(parts)
+
+
+def _score_to_rank_answer_summary(status: str, tool_trace: list[dict[str, Any]], warnings: list[str]) -> str:
+    result = next((trace.get("result") or {} for trace in tool_trace if trace.get("tool_name") == "score_to_rank"), None)
+    if not result:
+        return "这个问题需要先调用分数转位次工具；当前还没有可用的本地检索结果。"
+
+    result_status = result.get("status") or status
+    input_data = result.get("input") or {}
+    normalized = result.get("normalized_slots") or {}
+    data = result.get("data") or {}
+
+    if result_status == "ok":
+        rank_range = data.get("rank_range") or {}
+        province = normalized.get("province") or input_data.get("province") or "该省"
+        subject_type = normalized.get("matched_subject_type") or input_data.get("subject_type") or "该科类"
+        score = data.get("score") if data.get("score") is not None else input_data.get("score")
+        year = normalized.get("year") or input_data.get("year") or "命中年份"
+        highest = rank_range.get("highest_rank")
+        lowest = rank_range.get("lowest_rank")
+        same_count = data.get("same_count")
+        parts = [
+            f"{year}年{province}{subject_type}{score}分，对应位次区间约为 {highest}-{lowest} 名，同分人数 {same_count} 人。",
+            "这个换算只在同省、同科类、同年份内有效，后续做学校或专业匹配时应优先使用位次。",
+        ]
+        if input_data.get("year") in (None, ""):
+            parts.append(f"你没有指定年份，这里按本地库命中的 {year} 年返回。")
+        if warnings:
+            parts.append("注意：" + "；".join(warnings) + "。")
+        return "\n".join(parts)
+
+    if result_status == "not_found":
+        parts = ["本地库未命中对应的一分一段记录，不能给出可靠位次。"]
+        if warnings:
+            parts.append("注意：" + "；".join(warnings) + "。")
+        return "\n".join(parts)
+
+    if result_status == "needs_clarification":
+        missing = result.get("needs_clarification") or []
+        return _clarification_answer(missing or ["score"])
+
+    if result_status == "error":
+        warning_text = "；".join(result.get("warnings") or warnings)
+        return f"分数转位次执行失败，当前不能给出可靠位次。{('原因：' + warning_text + '。') if warning_text else ''}"
+
+    return "当前分数转位次结果口径不完整，不能给出可靠位次。"
 
 
 def main(argv: list[str] | None = None) -> int:

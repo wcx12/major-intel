@@ -1,0 +1,61 @@
+{
+  "cases": [
+    {
+      "id": "q1_school_major_profile",
+      "prompt": "杭电计算机怎么样？",
+      "expected_answer_tools": ["school_major_profile"],
+      "allowed_support_tools": ["school_lookup", "major_lookup", "school_profile", "major_profile", "school_major_list", "major_market_reference", "employment_summary"],
+      "forbidden_tools": ["civil_service_role_search", "civil_service_mapping", "rank_to_school_match", "rank_to_major_match"],
+      "max_executed_tool_calls": 4,
+      "allow_blocking_stop_before_expected": true,
+      "notes": "专业简称触发 needs_clarification 时，不应替用户猜成某个候选继续扩展。"
+    },
+    {
+      "id": "q2_rank_to_school",
+      "prompt": "浙江物理580分，能上哪些学校？",
+      "expected_answer_tools": ["rank_to_school_match"],
+      "allowed_support_tools": ["score_to_rank"],
+      "forbidden_tools": ["admission_history", "school_major_profile", "major_market_reference", "civil_service_role_search"],
+      "max_executed_tool_calls": 2,
+      "allow_blocking_stop_before_expected": true,
+      "notes": "一分一段或匹配 not_found 后应收口，不应换分数或改调用录取历史。"
+    },
+    {
+      "id": "q3_major_school_list",
+      "prompt": "计算机科学与技术这个专业，浙江有哪些本科院校开设？",
+      "expected_answer_tools": ["major_school_list"],
+      "allowed_support_tools": ["major_lookup"],
+      "forbidden_tools": ["school_major_profile", "rank_to_major_match", "admission_history"],
+      "max_executed_tool_calls": 2,
+      "notes": "这是专业反查学校，不是某校某专业画像。"
+    },
+    {
+      "id": "q4_school_major_list",
+      "prompt": "杭电有哪些专业？",
+      "expected_answer_tools": ["school_major_list"],
+      "allowed_support_tools": ["school_lookup"],
+      "forbidden_tools": ["major_school_list", "school_major_profile", "admission_history"],
+      "max_executed_tool_calls": 3,
+      "notes": "可以先解析杭电，再查学校专业列表。"
+    },
+    {
+      "id": "q5_civil_service",
+      "prompt": "计算机科学与技术考公能报什么岗位？",
+      "expected_answer_tools": ["civil_service_mapping"],
+      "allowed_support_tools": ["major_lookup", "major_profile"],
+      "forbidden_tools": ["civil_service_role_search", "major_market_reference", "rank_to_major_match"],
+      "max_executed_tool_calls": 3,
+      "notes": "优先用 wrapper 工具，避免直接把岗位样本当成最终可报判断。"
+    },
+    {
+      "id": "q6_streaming_policy",
+      "prompt": "杭电计算机大类分流风险大吗？",
+      "expected_answer_tools": ["major_streaming_policy_lookup", "specialty_group_risk"],
+      "allowed_support_tools": ["school_lookup", "major_lookup", "school_major_list", "specialty_group_lookup", "transfer_policy_lookup"],
+      "forbidden_tools": ["rank_to_school_match", "rank_to_major_match", "civil_service_mapping", "civil_service_role_search"],
+      "max_executed_tool_calls": 6,
+      "allow_blocking_stop_before_expected": true,
+      "notes": "拿到分流政策或专业组风险上下文后应收口，不应继续横向扩展太多工具。"
+    }
+  ]
+}
