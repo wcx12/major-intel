@@ -73,9 +73,15 @@ src/major_intel/agents/                规则入口、DeepSeek agent、统一 ag
 src/major_intel/storage/               MySQL client、缓存、轨迹、缺口队列和别名初始化
 src/major_intel/evaluation/            smoke runner、边界评测和 oracle 代码
 src/major_intel/datasets/dialogue/     高考志愿对话数据集清洗与构建逻辑
+src/major_intel/crawlers/              rysxai 等第三方数据 crawler 实现
+src/major_intel/ingestion/             爬取数据写入 MySQL 的入库实现
+src/major_intel/reporting/             爬取数据报告和 dashboard 构建实现
 
 scripts/*.py                           兼容 CLI wrapper，保留原手动测试命令
 scripts/datasets/                      数据集任务的结构化 CLI wrapper
+scripts/crawlers/                      crawler 任务的结构化 CLI wrapper
+scripts/ingestion/                     入库任务的结构化 CLI wrapper
+scripts/reports/                       报告/dashboard 任务的结构化 CLI wrapper
 scripts/rysxai_*                       第三方数据采集、报告、dashboard 脚本
 scripts/curate_*.py                    仍待第二批整理的一次性补数脚本
 

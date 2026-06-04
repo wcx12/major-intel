@@ -182,3 +182,61 @@ python -m pytest tests/test_build_dialogue_assets.py -q
 
 Expected result: old and structured CLI entrypoints both run, and the existing
 unit tests pass without importing implementation code from `scripts/`.
+
+### Task 8: Move Stable Rysxai Crawlers, Ingestion, And Reports
+
+**Files:**
+- Move: `scripts/rysxai_market_crawler.py` -> `src/major_intel/crawlers/rysxai_market_crawler.py`
+- Move: `scripts/rysxai_civil_service_crawler.py` -> `src/major_intel/crawlers/rysxai_civil_service_crawler.py`
+- Move: `scripts/rysxai_transfer_policy_crawler.py` -> `src/major_intel/crawlers/rysxai_transfer_policy_crawler.py`
+- Move: `scripts/ingest_rysxai_data.py` -> `src/major_intel/ingestion/rysxai_data.py`
+- Move: `scripts/rysxai_market_report.py` -> `src/major_intel/reporting/rysxai_market_report.py`
+- Move: `scripts/build_rysxai_dashboards.py` -> `src/major_intel/reporting/rysxai_dashboards.py`
+- Move: `scripts/build_rysxai_overview.py` -> `src/major_intel/reporting/rysxai_overview.py`
+- Move: `scripts/build_rysxai_transfer_policy_dashboard.py` -> `src/major_intel/reporting/rysxai_transfer_policy_dashboard.py`
+- Create package markers under `src/major_intel/crawlers/`, `src/major_intel/ingestion/`, and `src/major_intel/reporting/`.
+- Recreate the original `scripts/*.py` files as compatibility wrappers.
+- Create structured wrappers under `scripts/crawlers/`, `scripts/ingestion/`, and `scripts/reports/`.
+- Modify docs that describe crawler implementation locations.
+
+- [x] **Step 1: Move stable rysxai implementation modules**
+
+Use `git mv` for the tracked stable rysxai modules. Do not move untracked
+`curate_*.py`, raw seed files, generated reports, or local `clean/` experiments
+in this batch.
+
+- [x] **Step 2: Update internal imports**
+
+Inside moved implementation modules, replace any internal imports from
+`scripts.*` with `major_intel.*`. The known case is the market crawler importing
+the markdown report writer.
+
+- [x] **Step 3: Add compatibility wrappers**
+
+Keep the original flat commands working, for example:
+
+```powershell
+python scripts/rysxai_market_crawler.py --help
+python scripts/ingest_rysxai_data.py --help
+python scripts/build_rysxai_transfer_policy_dashboard.py --help
+```
+
+Also expose structured wrappers, for example:
+
+```powershell
+python scripts/crawlers/rysxai_market_crawler.py --help
+python scripts/ingestion/ingest_rysxai_data.py --help
+python scripts/reports/build_rysxai_transfer_policy_dashboard.py --help
+```
+
+- [x] **Step 4: Verify crawler and ingestion tests**
+
+Run:
+
+```powershell
+python -m pytest tests/test_rysxai_market_crawler.py tests/test_rysxai_civil_service_crawler.py tests/test_rysxai_transfer_policy_crawler.py tests/test_rysxai_market_report.py tests/test_rysxai_transfer_policy_dashboard.py tests/test_rysxai_data_ingestion.py -q
+python -m unittest discover -s tests
+```
+
+Expected result: old imports through `scripts.*` keep working, structured
+wrappers import successfully, and the full local suite still passes.

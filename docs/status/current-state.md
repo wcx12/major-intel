@@ -165,9 +165,9 @@ policy_rule_lookup
 已完成：
 
 - 专业列表 seed：`data/seeds/rysxai_professions.full.csv`。
-- 市场样本 crawler：`scripts/rysxai_market_crawler.py`。
-- Markdown 报告渲染：`scripts/rysxai_market_report.py`。
-- 市场概览与 dashboard 构建：`scripts/build_rysxai_overview.py`、`scripts/build_rysxai_dashboards.py`。
+- 市场样本 crawler：实现位于 `src/major_intel/crawlers/rysxai_market_crawler.py`；兼容命令为 `scripts/rysxai_market_crawler.py`；结构化命令为 `scripts/crawlers/rysxai_market_crawler.py`。
+- Markdown 报告渲染：实现位于 `src/major_intel/reporting/rysxai_market_report.py`；兼容命令为 `scripts/rysxai_market_report.py`；结构化命令为 `scripts/reports/rysxai_market_report.py`。
+- 市场概览与 dashboard 构建：实现位于 `src/major_intel/reporting/rysxai_overview.py`、`src/major_intel/reporting/rysxai_dashboards.py`；兼容命令为 `scripts/build_rysxai_overview.py`、`scripts/build_rysxai_dashboards.py`；结构化命令位于 `scripts/reports/`。
 - 单元测试：`tests/test_rysxai_market_crawler.py`、`tests/test_rysxai_market_report.py`。
 
 边界：
@@ -179,7 +179,7 @@ policy_rule_lookup
 
 已完成：
 
-- 2026 公考岗位详情 crawler：`scripts/rysxai_civil_service_crawler.py`。
+- 2026 公考岗位详情 crawler：实现位于 `src/major_intel/crawlers/rysxai_civil_service_crawler.py`；兼容命令为 `scripts/rysxai_civil_service_crawler.py`；结构化命令为 `scripts/crawlers/rysxai_civil_service_crawler.py`。
 - JSONL 到 CSV 展平能力。
 - 本地检索工具 `civil_service_role_search` 已能读取已接入样本。
 - 单元测试：`tests/test_rysxai_civil_service_crawler.py`。
@@ -194,8 +194,8 @@ policy_rule_lookup
 本轮新增：
 
 - 学校列表 seed：`data/seeds/rysxai_universities.csv`。
-- 转专业政策 crawler：`scripts/rysxai_transfer_policy_crawler.py`。
-- 转专业政策静态 dashboard：`scripts/build_rysxai_transfer_policy_dashboard.py`。
+- 转专业政策 crawler：实现位于 `src/major_intel/crawlers/rysxai_transfer_policy_crawler.py`；兼容命令为 `scripts/rysxai_transfer_policy_crawler.py`；结构化命令为 `scripts/crawlers/rysxai_transfer_policy_crawler.py`。
+- 转专业政策静态 dashboard：实现位于 `src/major_intel/reporting/rysxai_transfer_policy_dashboard.py`；兼容命令为 `scripts/build_rysxai_transfer_policy_dashboard.py`；结构化命令为 `scripts/reports/build_rysxai_transfer_policy_dashboard.py`。
 - 单元测试：`tests/test_rysxai_transfer_policy_crawler.py`、`tests/test_rysxai_transfer_policy_dashboard.py`。
 
 边界：
