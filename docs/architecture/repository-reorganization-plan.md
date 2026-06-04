@@ -138,3 +138,47 @@ git status --short
 
 Only planned code, docs, and ignore changes should appear. Existing untracked
 local data may still appear, but should not be staged.
+
+### Task 7: Move Dialogue Dataset Code And Snapshot
+
+**Files:**
+- Move: `scripts/build_dialogue_assets.py` -> `src/major_intel/datasets/dialogue/build_dialogue_assets.py`
+- Move: `clean/dialogue_claude_full/` -> `datasets/dialogue/claude_full/`
+- Create: `src/major_intel/datasets/__init__.py`
+- Create: `src/major_intel/datasets/dialogue/__init__.py`
+- Create: `scripts/datasets/build_dialogue_assets.py`
+- Recreate: `scripts/build_dialogue_assets.py` as a compatibility wrapper.
+- Create: `datasets/dialogue/README.md`
+- Modify: `README.md`, `docs/status/current-state.md`
+
+- [x] **Step 1: Move stable dialogue builder code**
+
+Move the importable dialogue asset builder into `src/major_intel/datasets/dialogue`.
+Keep the old `scripts/build_dialogue_assets.py` command as a wrapper, and add a
+new structured wrapper under `scripts/datasets/`.
+
+- [x] **Step 2: Move committed dialogue snapshot**
+
+Move the tracked formal snapshot from `clean/dialogue_claude_full/` into
+`datasets/dialogue/claude_full/`. Leave untracked local experiments under
+`clean/` untouched.
+
+- [x] **Step 3: Update dataset documentation**
+
+Document the new snapshot location, the builder location, and the generated
+output policy. Generated rebuild output should default to ignored
+`data/processed/dialogue/`, while committed snapshots live under
+`datasets/dialogue/`.
+
+- [x] **Step 4: Verify dialogue wrappers and tests**
+
+Run:
+
+```powershell
+python scripts/build_dialogue_assets.py --limit 1 --output-dir data/processed/dialogue_smoke
+python scripts/datasets/build_dialogue_assets.py --limit 1 --output-dir data/processed/dialogue_smoke_structured
+python -m pytest tests/test_build_dialogue_assets.py -q
+```
+
+Expected result: old and structured CLI entrypoints both run, and the existing
+unit tests pass without importing implementation code from `scripts/`.

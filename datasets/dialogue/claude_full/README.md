@@ -13,12 +13,12 @@
 ## 生成命令
 
 ```bash
-python scripts/build_dialogue_assets.py \
+python scripts/datasets/build_dialogue_assets.py \
   --cleaner claude \
   --claude-batch-size 1 \
   --claude-timeout-seconds 360 \
   --no-rule-fallback \
-  --output-dir clean/dialogue_claude_full
+  --output-dir datasets/dialogue/claude_full
 ```
 
 清洗过程中使用了缓存续跑。最终产物已重新生成，`llm_cleaned_dialogues.jsonl`、`question_bank.jsonl`、`function_call_eval_cases.jsonl` 均为 152 条全量结果。

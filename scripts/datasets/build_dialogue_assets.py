@@ -1,4 +1,4 @@
-"""Compatibility wrapper for ``major_intel.datasets.dialogue.build_dialogue_assets``."""
+"""Structured CLI wrapper for dialogue dataset asset building."""
 
 from __future__ import annotations
 
@@ -6,9 +6,9 @@ from importlib import import_module
 import sys
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
+SCRIPTS_ROOT = Path(__file__).resolve().parents[1]
+if str(SCRIPTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_ROOT))
 
 from _compat import ensure_src_on_path
 

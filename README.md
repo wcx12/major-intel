@@ -72,17 +72,21 @@ src/major_intel/function_calls/        function schema、dispatcher、检索工�
 src/major_intel/agents/                规则入口、DeepSeek agent、统一 agent 入口
 src/major_intel/storage/               MySQL client、缓存、轨迹、缺口队列和别名初始化
 src/major_intel/evaluation/            smoke runner、边界评测和 oracle 代码
+src/major_intel/datasets/dialogue/     高考志愿对话数据集清洗与构建逻辑
 
 scripts/*.py                           兼容 CLI wrapper，保留原手动测试命令
+scripts/datasets/                      数据集任务的结构化 CLI wrapper
 scripts/rysxai_*                       第三方数据采集、报告、dashboard 脚本
 scripts/curate_*.py                    仍待第二批整理的一次性补数脚本
 
 docs/architecture/                     仓库结构与系统架构
+docs/datasets/                         数据集来源、清洗口径和使用边界
 docs/research/                         起点调研与背景材料
 docs/specs/                            设计文档、工具规划、数据接入方案
 docs/status/current-state.md           当前状态快照
 
 tests/                                 单元测试，后续继续按模块拆分
+datasets/dialogue/                     已提交的对话数据集快照和清单
 data/seeds/                            可提交的小型种子数据
 data/raw/、data/processed/、tmp/        本地数据与临时产物，默认不提交
 ```

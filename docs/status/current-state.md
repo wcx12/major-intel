@@ -52,6 +52,8 @@ web_gap_fill
 - `src/major_intel/agents/deepseek_retrieval_agent.py`：DeepSeek function-call agent，能把 function schema 暴露给模型并执行本地 dispatcher。
 - `src/major_intel/agents/retrieval_agent_entrypoint.py`：统一入口，自动协调离线规则入口和 DeepSeek agent。
 - `src/major_intel/storage/agent_query_storage.py`：统一入口的 MySQL 查询日志、缓存和工具轨迹存储层。
+- `src/major_intel/datasets/dialogue/build_dialogue_assets.py`：高考志愿对话数据集清洗、问题库和 function-call 评测用例构建逻辑。
+- `datasets/dialogue/claude_full/`：已提交的对话数据集正式快照。
 - `scripts/*.py`：保留兼容 CLI wrapper，原手动测试命令仍可继续使用。
 
 已经完成的关键修复和增强：
