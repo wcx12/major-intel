@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_JSONL_PATH = ROOT / "data" / "raw" / "rysxai_transfer_policies.jsonl"
 DEFAULT_OUTPUT_PATH = ROOT / "reports" / "rysxai" / "transfer_policy_dashboard.html"
 

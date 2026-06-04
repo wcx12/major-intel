@@ -6,7 +6,7 @@ from collections import Counter
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 PROC_DIR = ROOT / "data" / "processed" / "rysxai"
 SEED_FILE = ROOT / "data" / "seeds" / "rysxai_professions.full.csv"
 OUT_FILE = ROOT / "reports" / "rysxai" / "undergraduate_market_overview.html"

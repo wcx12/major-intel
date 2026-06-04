@@ -1,0 +1,384 @@
+﻿import json
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+from scripts.retrieval_tools import tool_result
+
+
+class RecordingDispatcher:
+    """Test dispatcher that records tool calls without touching MySQL.
+
+    The natural-language entrypoint should be testable as pure orchestration:
+    route a question, extract slots, build a tool plan, and pass arguments to
+    the existing function-call dispatcher boundary.  These tests therefore use
+    deterministic fake tool results instead of a live database.
+    """
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, tool_name, arguments):
+        self.calls.append((tool_name, arguments))
+        status = "partial" if tool_name in {
+            "school_major_profile",
+            "civil_service_role_search",
+            "civil_service_mapping",
+            "major_streaming_policy_lookup",
+            "policy_rule_lookup",
+        } else "ok"
+        return tool_result(
+            tool_name,
+            status,
+            arguments,
+            data={"echo": arguments},
+            scope_notes=[f"{tool_name} scope"],
+            data_gaps=["校专业级就业事实"] if tool_name == "school_major_profile" else [],
+            warnings=["考公岗位文本命中不等于正式可报"] if tool_name in {"civil_service_role_search", "civil_service_mapping"} else [],
+        )
+
+
+class NaturalLanguageEntryPointTests(unittest.TestCase):
+    def test_routes_score_major_question_to_rank_to_major_match(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("广东物理 580 想学计算机，有哪些稳一点的学校？")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intent"], "rank_to_major_match")
+        self.assertEqual(result["slots"]["province"], "广东")
+        self.assertEqual(result["slots"]["subject_type"], "物理")
+        self.assertEqual(result["slots"]["score"], 580)
+        self.assertEqual(result["slots"]["major_text"], "计算机")
+        self.assertEqual(
+            dispatcher.calls,
+            [
+                (
+                    "rank_to_major_match",
+                    {
+                        "province": "广东",
+                        "subject_type": "物理",
+                        "score": 580,
+                        "major_text": "计算机",
+                        "limit": 30,
+                    },
+                )
+            ],
+        )
+
+    def test_missing_province_and_subject_returns_clarification_without_tools(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("45000 位次能冲什么？")
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["intent"], "rank_to_school_match")
+        self.assertEqual(result["needs_clarification"], ["province", "subject_type"])
+        self.assertEqual(dispatcher.calls, [])
+        self.assertIn("省份", result["answer_markdown"])
+
+    def test_score_to_rank_question_does_not_route_to_recommendation(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("广东物理 580 分对应多少位次？")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intent"], "score_to_rank")
+        self.assertEqual(
+            dispatcher.calls,
+            [("score_to_rank", {"province": "广东", "subject_type": "物理", "score": 580})],
+        )
+
+    def test_score_to_rank_3plus3_question_without_subject_delegates_to_tool(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("浙江620分对应多少位次？")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intent"], "score_to_rank")
+        self.assertEqual(dispatcher.calls, [("score_to_rank", {"province": "浙江", "score": 620})])
+
+    def test_rank_question_with_province_without_subject_delegates_subject_mode_to_tool(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("浙江30000位次能上哪些学校？")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intent"], "rank_to_school_match")
+        self.assertEqual(dispatcher.calls, [("rank_to_school_match", {"province": "浙江", "rank": 30000, "limit": 30})])
+
+    def test_score_to_rank_answer_includes_rank_range_year_same_count_and_scope(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        def dispatcher(tool_name, arguments):
+            return tool_result(
+                tool_name,
+                "ok",
+                {**arguments, "year": arguments.get("year")},
+                normalized_slots={
+                    "province": "浙江",
+                    "province_id": "33",
+                    "subject_type": "综合",
+                    "matched_subject_type": "综合",
+                    "year": "2025",
+                },
+                data={
+                    "score": 620,
+                    "same_count": 893,
+                    "rank_range": {"highest_rank": 31222, "lowest_rank": 32114},
+                },
+                scope_notes=["位次优先于分数；分数转位次只在同省、同科类、同年份内有效。"],
+                source_tables=["edu_score_rank"],
+            )
+
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("2025年浙江综合620分对应多少位次？")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("2025", result["answer_markdown"])
+        self.assertIn("31222", result["answer_markdown"])
+        self.assertIn("32114", result["answer_markdown"])
+        self.assertIn("893", result["answer_markdown"])
+        self.assertIn("同省、同科类、同年份", result["answer_markdown"])
+
+    def test_score_to_rank_question_with_two_digit_score_routes_to_score_to_rank(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("2025年天津综合99分对应多少位次？")
+
+        self.assertEqual(result["intent"], "score_to_rank")
+        self.assertEqual(
+            dispatcher.calls,
+            [("score_to_rank", {"province": "天津", "subject_type": "综合", "score": 99, "year": 2025})],
+        )
+
+    def test_score_to_rank_question_with_decimal_score_asks_for_integer_score(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("2025年浙江综合620.9分对应多少位次？")
+
+        self.assertEqual(result["intent"], "score_to_rank")
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["score"])
+        self.assertEqual(dispatcher.calls, [])
+        self.assertIn("分数", result["answer_markdown"])
+
+    def test_score_to_rank_question_with_chinese_score_asks_for_numeric_score(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("2025年浙江综合六百二十分对应多少位次？")
+
+        self.assertEqual(result["intent"], "score_to_rank")
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["needs_clarification"], ["score"])
+        self.assertEqual(dispatcher.calls, [])
+        self.assertIn("分数", result["answer_markdown"])
+
+    def test_major_market_question_routes_to_market_reference(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("计算机薪资怎么样，主要去哪些公司？")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intent"], "major_market_reference")
+        self.assertEqual(dispatcher.calls, [("major_market_reference", {"major_text": "计算机", "sample_limit": 10})])
+
+    def test_school_major_list_question_routes_to_school_major_list(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("杭电有哪些专业？")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intent"], "school_major_list")
+        self.assertEqual(dispatcher.calls, [("school_major_list", {"school_text": "杭州电子科技大学", "limit": 50})])
+
+    def test_school_major_profile_uses_multiple_supporting_tools(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("杭电计算机怎么样？")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["intent"], "school_major_profile")
+        self.assertEqual(result["slots"]["school_text"], "杭州电子科技大学")
+        self.assertEqual(result["slots"]["major_text"], "计算机")
+        self.assertEqual(
+            [tool_name for tool_name, _ in dispatcher.calls],
+            ["school_major_profile", "employment_summary", "admission_history", "data_gap_detection"],
+        )
+        self.assertEqual(dispatcher.calls[0][1], {"school_text": "杭州电子科技大学", "major_text": "计算机"})
+        self.assertIn("校专业级就业事实", result["data_gaps"])
+
+    def test_civil_service_question_uses_sample_search_as_partial_mapping(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("软件工程适合考公吗？")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["intent"], "civil_service_mapping")
+        self.assertEqual(dispatcher.calls, [("civil_service_mapping", {"major_text": "软件工程", "limit": 20})])
+        self.assertIn("不是正式可报判定", "".join(result["warnings"]))
+
+    def test_major_streaming_question_routes_to_policy_gap_tool(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("杭电计算机大类分流比例是多少？")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["intent"], "major_streaming_policy_lookup")
+        self.assertEqual(
+            dispatcher.calls,
+            [
+                (
+                    "major_streaming_policy_lookup",
+                    {
+                        "school_text": "杭州电子科技大学",
+                        "major_text": "计算机",
+                        "limit": 10,
+                    },
+                )
+            ],
+        )
+
+    def test_policy_rule_question_routes_to_policy_rule_lookup(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("杭电招生章程有没有单科限制？")
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["intent"], "policy_rule_lookup")
+        self.assertEqual(
+            dispatcher.calls,
+            [
+                (
+                    "policy_rule_lookup",
+                    {
+                        "school_text": "杭州电子科技大学",
+                        "policy_type": "单科限制",
+                    },
+                )
+            ],
+        )
+
+    def test_specialty_group_risk_without_context_asks_for_precise_slots(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("这个专业组会不会被调剂到冷门专业？")
+
+        self.assertEqual(result["status"], "needs_clarification")
+        self.assertEqual(result["intent"], "specialty_group_risk")
+        self.assertEqual(result["needs_clarification"], ["school_text", "province", "year", "group_code"])
+        self.assertEqual(dispatcher.calls, [])
+
+    def test_school_comparison_question_routes_to_comparison_query(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run("杭电和浙大怎么选？")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intent"], "comparison_query")
+        self.assertEqual(result["slots"]["comparison_targets"], ["杭州电子科技大学", "浙江大学"])
+        self.assertEqual(
+            dispatcher.calls,
+            [
+                (
+                    "comparison_query",
+                    {
+                        "target_type": "school",
+                        "target_texts": ["杭州电子科技大学", "浙江大学"],
+                        "limit": 10,
+                    },
+                )
+            ],
+        )
+
+    def test_session_context_can_supply_missing_score_match_slots(self):
+        from scripts.natural_language_entrypoint import NaturalLanguageEntryPoint
+
+        dispatcher = RecordingDispatcher()
+        entrypoint = NaturalLanguageEntryPoint(dispatcher=dispatcher)
+
+        result = entrypoint.run(
+            "想学计科能看哪些学校？",
+            session_context={"province": "广东", "subject_type": "物理", "score": 580},
+        )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["intent"], "rank_to_major_match")
+        self.assertEqual(result["slots"]["major_text"], "计科")
+        self.assertEqual(dispatcher.calls[0][0], "rank_to_major_match")
+        self.assertEqual(dispatcher.calls[0][1]["province"], "广东")
+
+    def test_cli_can_plan_without_database(self):
+        repo_root = Path(__file__).resolve().parents[2]
+        script_path = repo_root / "scripts" / "natural_language_entrypoint.py"
+
+        completed = subprocess.run(
+            [sys.executable, str(script_path), "广东物理 580 想学计算机", "--no-execute"],
+            cwd=repo_root,
+            capture_output=True,
+        )
+
+        self.assertEqual(
+            completed.returncode,
+            0,
+            completed.stderr.decode("utf-8", errors="replace")
+            + completed.stdout.decode("utf-8", errors="replace"),
+        )
+        payload = json.loads(completed.stdout.decode("utf-8"))
+        self.assertEqual(payload["intent"], "rank_to_major_match")
+        self.assertEqual(payload["tool_plan"][0]["tool_name"], "rank_to_major_match")
+        self.assertEqual(payload["tool_trace"], [])
+
+
+if __name__ == "__main__":
+    unittest.main()

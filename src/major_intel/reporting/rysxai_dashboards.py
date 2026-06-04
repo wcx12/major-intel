@@ -8,7 +8,7 @@ from collections import Counter
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 PROC_DIR = ROOT / "data" / "processed" / "rysxai"
 SEED_FILE = ROOT / "data" / "seeds" / "rysxai_professions.full.csv"
 CIVIL_FILE = ROOT / "data" / "processed" / "rysxai_civil_service_2026.csv"

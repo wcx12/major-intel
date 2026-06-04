@@ -82,8 +82,9 @@ scripts/datasets/                      数据集任务的结构化 CLI wrapper
 scripts/crawlers/                      crawler 任务的结构化 CLI wrapper
 scripts/ingestion/                     入库任务的结构化 CLI wrapper
 scripts/reports/                       报告/dashboard 任务的结构化 CLI wrapper
+scripts/evaluation/                    评估任务的结构化 CLI wrapper
 scripts/rysxai_*                       第三方数据采集、报告、dashboard 脚本
-scripts/curate_*.py                    仍待第二批整理的一次性补数脚本
+scripts/one_off/official_sources/      历史批次官网证据采集和补数脚本，不作为稳定 API
 
 docs/architecture/                     仓库结构与系统架构
 docs/datasets/                         数据集来源、清洗口径和使用边界
@@ -91,7 +92,14 @@ docs/research/                         起点调研与背景材料
 docs/specs/                            设计文档、工具规划、数据接入方案
 docs/status/current-state.md           当前状态快照
 
-tests/                                 单元测试，后续继续按模块拆分
+tests/agents/                          Agent 入口测试
+tests/retrieval/                       function call registry 与底层检索测试
+tests/evaluation/                      边界评估和 smoke runner 测试
+tests/crawlers/                        通用 crawler 和证据检索测试
+tests/ingestion/                       入库、清洗、数据包构建测试
+tests/reporting/                       报告和 dashboard 构建测试
+tests/datasets/                        对话数据集构建测试
+tests/one_off/official_sources/        历史批次脚本回归测试
 datasets/dialogue/                     已提交的对话数据集快照和清单
 data/seeds/                            可提交的小型种子数据
 data/raw/、data/processed/、tmp/        本地数据与临时产物，默认不提交
@@ -339,17 +347,20 @@ python scripts/run_retrieval_smoke_cases.py --sample-per-tool 1 --report reports
 
 ## 当前测试状态
 
-最近一次完整验证：
+最近一次结构迁移验证：
 
 ```text
-python -m unittest tests.test_retrieval_smoke_runner
-Ran 7 tests
+python -m compileall -q src scripts tests
 OK
 
 python -m unittest discover -s tests
-Ran 133 tests
+Ran 734 tests in 95.976s
 OK
+```
 
+最近一次真实库 smoke 验证记录：
+
+```text
 python scripts/run_retrieval_smoke_cases.py --report reports/retrieval_smoke_27_tools_full.json --timeout 60
 total 305, passed 305, failed 0, quality_misses 0
 ```
@@ -363,6 +374,7 @@ total 305, passed 305, failed 0, quality_misses 0
 - 统一 agent 入口。
 - 查询日志、缓存、工具轨迹存储层。
 - rysxai 市场、考公、转专业数据处理链路。
+- 升学/官网证据 crawler、clean package、dashboard 的历史批次回归测试。
 
 ## 数据边界
 
