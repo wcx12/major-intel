@@ -240,3 +240,61 @@ python -m unittest discover -s tests
 
 Expected result: old imports through `scripts.*` keep working, structured
 wrappers import successfully, and the full local suite still passes.
+
+### Task 9: Inventory Local Workspace Noise
+
+**Files:**
+- Create: `docs/status/local-workspace-inventory-2026-06-04.md`
+- Modify: `docs/architecture/repository-reorganization-plan.md`
+
+- [x] **Step 1: Count untracked and ignored files**
+
+Run read-only `git status`, `git ls-files --others --exclude-standard`, and
+directory-size checks to understand local workspace noise without moving or
+deleting files.
+
+- [x] **Step 2: Classify local files by project use**
+
+Classify untracked local files into local data products, generated reports,
+dialogue experiment outputs, legacy curation scripts/tests, graduate outcome
+pipeline candidates, and research docs.
+
+- [x] **Step 3: Write the inventory report**
+
+Write a concise report with counts, major patterns, risks, and the recommended
+next execution order.
+
+### Task 10: Graduate Outcome Pipeline Restructure
+
+**Files:**
+- Inspect: `scripts/graduate_outcome_crawler.py`
+- Inspect: `scripts/rebuild_graduate_outcome_package.py`
+- Inspect: `scripts/build_graduate_outcomes_dashboard.py`
+- Inspect: `tests/test_graduate_outcome_crawler.py`
+- Inspect: `tests/test_graduate_outcomes_dashboard.py`
+- Inspect: `tests/test_graduate_outcomes_workbook_package.py`
+- Potential create: `src/major_intel/crawlers/graduate_outcomes/`
+- Potential create: `scripts/crawlers/graduate_outcomes/`
+
+- [ ] **Step 1: Audit graduate outcome files**
+
+Read the graduate outcome scripts and tests to decide which code is stable
+enough to move into `src/major_intel` and which files should remain local or
+legacy.
+
+- [ ] **Step 2: Move stable graduate outcome modules**
+
+Use `git mv` only for files selected after the audit. Keep old `scripts/*.py`
+commands as compatibility wrappers.
+
+- [ ] **Step 3: Verify graduate outcome tests**
+
+Run:
+
+```powershell
+python -m pytest tests/test_graduate_outcome_crawler.py tests/test_graduate_outcomes_dashboard.py tests/test_graduate_outcomes_workbook_package.py -q
+python -m unittest discover -s tests
+```
+
+Expected result: graduate outcome tests and the full suite pass, with no
+changes to unrelated local data.
