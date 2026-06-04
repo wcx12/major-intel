@@ -19,13 +19,23 @@
 
 ## 4. 测试范围
 
-当前仅完成目录和 README 结构。后续应覆盖分数转位次、直接位次、缺槽、双一流过滤、空结果、风险分层。
+专属边界评估器覆盖四层：
+
+- 自然语言 function call：intent、槽位、工具参数是否正确，尤其是多省份偏好、`省内`、学校层级过滤。
+- 数据库 oracle：独立 SQL 从本地 `edu_score_rank`、`edu_school_admission_stats`、`edu_university` 复算候选、年份回退和冲稳保分桶。
+- 工具 envelope：直接调用 `rank_to_school_match` 后，对比状态、参考年份、返回数量、bucket count、学校名。
+- 用户答案：检查最终回答是否列出学校、冲稳保、位次、参考年份、空 bucket、历史参考/专业录取限制，并拒绝“保证录取”等越界表述。
 
 ## 5. 测试结果
 
-- 最近运行日期：尚未运行专属测试。
-- 运行命令：待补充。
-- 运行结果：待补充。
+- 最近运行日期：2026-06-03。
+- 快速单元测试：`python -m pytest tests/test_rank_to_school_match_boundary_evaluator.py -q`
+- 人工边界集：`python scripts/evaluate_rank_to_school_match_boundaries.py --manual-only --stamp 20260603_manual_after_fix`
+- 完整边界集：`python scripts/evaluate_rank_to_school_match_boundaries.py --stamp 20260603_full --auto-groups 10 --threshold-cases 5`
+- 最新完整报告：`reports/rank_to_school_match_boundary_eval_20260603_full.md`
+- 最新完整 JSONL：`reports/rank_to_school_match_boundary_eval_20260603_full.jsonl`
+
+最新完整评估：38 条 case，工具层 hard fail 为 0；function-call fail 为 7；answer fail 为 198。主要失败集中在当前自然语言入口没有为 `rank_to_school_match` 渲染推荐答案，只返回“已调用工具”的摘要。
 
 ## 6. 已知风险与待改善
 

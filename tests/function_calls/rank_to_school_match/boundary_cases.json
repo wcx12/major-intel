@@ -1,0 +1,117 @@
+{
+  "cases": [
+    {
+      "id": "manual_zhejiang_590_in_province",
+      "category": "manual_ok_filtered_region",
+      "question": "浙江综合590分，省内能报哪些学校？",
+      "province": "浙江",
+      "subject_type": "综合",
+      "score": 590,
+      "year": 2025,
+      "preferred_regions": ["浙江"],
+      "limit": 10,
+      "expected_intent": "rank_to_school_match",
+      "expected_slots": {"province": "浙江", "subject_type": "综合", "score": 590},
+      "expected_arguments": {"province": "浙江", "subject_type": "综合", "score": 590, "preferred_regions": ["浙江"]}
+    },
+    {
+      "id": "manual_zhejiang_590_score_to_rank_not_recommendation",
+      "category": "manual_call_routing",
+      "question": "浙江综合590分对应多少位次？",
+      "province": "浙江",
+      "subject_type": "综合",
+      "score": 590,
+      "year": 2025,
+      "expected_intent": "score_to_rank",
+      "expected_slots": {"province": "浙江", "subject_type": "综合", "score": 590}
+    },
+    {
+      "id": "manual_rank_missing_province_subject",
+      "category": "manual_clarification",
+      "question": "45000位次能冲什么？",
+      "rank": 45000,
+      "expected_intent": "rank_to_school_match",
+      "expected_missing": ["province", "subject_type"]
+    },
+    {
+      "id": "manual_guangdong_computer_routes_to_major_match",
+      "category": "manual_call_routing",
+      "question": "广东物理580分想学计算机，能报什么学校？",
+      "province": "广东",
+      "subject_type": "物理",
+      "score": 580,
+      "major_text": "计算机",
+      "expected_intent": "rank_to_major_match",
+      "expected_slots": {"province": "广东", "subject_type": "物理", "score": 580, "major_text": "计算机"}
+    },
+    {
+      "id": "manual_henan_multi_region_preference",
+      "category": "manual_multi_region_slot_boundary",
+      "question": "河南理科465分想报本科，河南河北山西安徽有没有稳一点的学校？",
+      "province": "河南",
+      "subject_type": "理科",
+      "score": 465,
+      "year": 2025,
+      "school_level_filter": "本科",
+      "preferred_regions": ["河南", "河北", "山西", "安徽"],
+      "limit": 10,
+      "expected_intent": "rank_to_school_match",
+      "expected_slots": {"province": "河南", "subject_type": "理科", "score": 465},
+      "expected_arguments": {
+        "province": "河南",
+        "subject_type": "理科",
+        "score": 465,
+        "school_level_filter": "本科",
+        "preferred_regions": ["河南", "河北", "山西", "安徽"]
+      }
+    },
+    {
+      "id": "manual_anhui_physics_gap",
+      "category": "manual_not_found",
+      "question": "安徽物理37839位次，江浙沪皖能报哪些学校？",
+      "province": "安徽",
+      "subject_type": "物理",
+      "rank": 37839,
+      "year": 2025,
+      "preferred_regions": ["上海", "江苏", "浙江", "安徽"],
+      "limit": 10,
+      "expected_status": "not_found",
+      "expected_intent": "rank_to_school_match",
+      "expected_slots": {"province": "安徽", "subject_type": "物理", "rank": 37839}
+    },
+    {
+      "id": "manual_zhejiang_590_local_985_gap",
+      "category": "manual_strict_filter_not_found",
+      "question": "浙江综合590分，省内985能报吗？",
+      "province": "浙江",
+      "subject_type": "综合",
+      "score": 590,
+      "year": 2025,
+      "preferred_regions": ["浙江"],
+      "school_level_filter": "985",
+      "limit": 10,
+      "expected_status": "not_found",
+      "expected_intent": "rank_to_school_match",
+      "expected_slots": {"province": "浙江", "subject_type": "综合", "score": 590},
+      "expected_arguments": {
+        "province": "浙江",
+        "subject_type": "综合",
+        "score": 590,
+        "preferred_regions": ["浙江"],
+        "school_level_filter": "985"
+      }
+    },
+    {
+      "id": "manual_direct_rank_missing_subject_in_entrypoint",
+      "category": "manual_tool_vs_entrypoint_boundary",
+      "question": "浙江63956位次能报哪些学校？",
+      "province": "浙江",
+      "rank": 63956,
+      "year": 2025,
+      "preferred_regions": ["浙江"],
+      "limit": 10,
+      "expected_intent": "rank_to_school_match",
+      "expected_missing": ["subject_type"]
+    }
+  ]
+}

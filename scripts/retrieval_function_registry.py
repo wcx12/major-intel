@@ -119,11 +119,11 @@ _FUNCTION_SCHEMAS: dict[str, dict[str, Any]] = {
     ),
     "school_major_list": _function_schema(
         "school_major_list",
-        "查询某学校在本地库记录的开设专业列表。它不等于某省某年的招生专业列表。",
+        "查询某学校在本地库记录的开设专业列表。它不等于某省某年的招生专业列表。不要传 major_text；如果要查“学校+专业”是否开设，用 school_major_profile；如果要查“专业+地区”有哪些学校开设，用 major_school_list。",
         _object_schema(
             {
                 "school_text": _string("学校名称、简称或代码。"),
-                "major_category": _string("可选的专业类/门类筛选词，例如 计算机类、工学。"),
+                "major_category": _string("可选的专业类/门类筛选词，例如 计算机类、工学；不是具体专业名称，不要传 major_text。"),
                 "limit": _LIMIT,
             },
             ["school_text"],
@@ -162,11 +162,11 @@ _FUNCTION_SCHEMAS: dict[str, dict[str, Any]] = {
         _object_schema(
             {
                 "province": _string("考生所在省份名称或 province_id。"),
-                "subject_type": _string("科类，例如 物理、历史、综合。"),
+                "subject_type": _string("可选，科类或选考科目，例如 物理、历史、综合；缺省时工具会按省份/年份口径判断。"),
                 "score": _number("高考分数。"),
                 "year": _integer("可选，一分一段年份；不填时默认查本地最新年份。", minimum=2000, maximum=2100),
             },
-            ["province", "subject_type", "score"],
+            ["province", "score"],
         ),
     ),
     "rank_to_school_match": _function_schema(
@@ -175,7 +175,7 @@ _FUNCTION_SCHEMAS: dict[str, dict[str, Any]] = {
         _object_schema(
             {
                 "province": _string("考生所在省份名称或 province_id。"),
-                "subject_type": _string("可选，科类，例如 物理、历史、综合；用分数推位次时必须提供。"),
+                "subject_type": _string("可选，科类或选考科目，例如 物理、历史、综合；缺省时工具会按省份/年份口径判断，必要时追问。"),
                 "score": _number("可选，高考分数；未直接提供位次时，工具会先调用 score_to_rank 得到保守位次。"),
                 "rank": _integer("可选，考生位次；提供后会直接用位次匹配学校。"),
                 "year": _integer("可选，期望参考的录取年份；本地库没有当年录取时会回退到最近历史年份。", minimum=2000, maximum=2100),
@@ -197,7 +197,7 @@ _FUNCTION_SCHEMAS: dict[str, dict[str, Any]] = {
             {
                 "province": _string("考生所在省份名称或 province_id。"),
                 "major_text": _string("专业名称、简称、专业代码或较宽泛的专业兴趣词，例如 计科、软件工程、计算机。"),
-                "subject_type": _string("可选，科类，例如 物理、历史、综合；用分数推位次时必须提供。"),
+                "subject_type": _string("可选，科类或选考科目，例如 物理、历史、综合；缺省时工具会按省份/年份口径判断，必要时追问。"),
                 "score": _number("可选，高考分数；未直接提供位次时，工具会先调用 score_to_rank 得到保守位次。"),
                 "rank": _integer("可选，考生位次；提供后会直接用位次匹配专业录取历史。"),
                 "year": _integer("可选，期望参考的录取年份；本地库没有当年录取时会回退到最近历史年份。", minimum=2000, maximum=2100),
@@ -424,6 +424,54 @@ _FUNCTION_SCHEMAS: dict[str, dict[str, Any]] = {
                 "available_fields": _string_array("当前检索结果已经覆盖的字段名列表。"),
             },
             ["question_type"],
+        ),
+    ),
+    "web_evidence_search": _function_schema(
+        "web_evidence_search",
+        "通过已配置的免费 SearXNG 服务搜索外部网页证据。只在本地工具 not_found/partial、存在 data_gaps，或用户明确询问最新/官网/招生章程/政策/选科/学费/校区等时使用；结果必须作为外部证据引用 URL，不能当成本地库事实。",
+        _object_schema(
+            {
+                "query": _string("要提交给搜索引擎的中文检索词，应包含学校/专业/年份/政策关键词等已确认实体。"),
+                "search_scope": _string("可选检索范围，例如 official、admission、policy、general。"),
+                "domains": _string_array("可选，限制搜索的域名列表，例如 hdu.edu.cn、chsi.com.cn。"),
+                "limit": _LIMIT,
+            },
+            ["query"],
+        ),
+    ),
+    "web_evidence_fetch": _function_schema(
+        "web_evidence_fetch",
+        "严谨版外部网页证据工具：先用 SearXNG 搜索候选来源，再抓取候选网页正文并抽取可引用证据片段。默认只采纳学校官网、省考试院、阳光高考等高可信来源；第三方来源只能作为线索。",
+        _object_schema(
+            {
+                "query": _string("要搜索并核验的中文检索词，应包含学校、专业、年份、政策关键词等已确认实体。"),
+                "search_scope": _string("可选检索范围，例如 official、admission、policy、general。"),
+                "domains": _string_array("可选，限制搜索的域名列表，例如 sjtu.edu.cn、chsi.com.cn。"),
+                "limit": _LIMIT,
+                "fetch_limit": _integer("最多抓取多少个候选页面正文。", minimum=1, maximum=10),
+                "evidence_limit": _integer("每个页面最多返回多少条证据片段。", minimum=1, maximum=10),
+                "source_policy": _string("来源策略：official_only、trusted_first、official_first 或 any。默认 official_only。"),
+            },
+            ["query"],
+        ),
+    ),
+    "web_gap_fill": _function_schema(
+        "web_gap_fill",
+        "基于结构化 gap_items 对本地数据库未命中的高考志愿信息进行有限轮次网页补全。它会优先抓取官方/考试院/阳光高考等可信来源，并区分 accepted_evidence、rejected_evidence 和 unfilled_gaps。",
+        _object_schema(
+            {
+                "gap_items": {
+                    "type": "array",
+                    "description": "结构化缺口数组，通常来自 data_gap_detection 或本地工具结果缺口识别。",
+                    "items": {"type": "object", "additionalProperties": True},
+                },
+                "question": _string("可选，用户原始问题，用于生成更完整的搜索查询。"),
+                "max_rounds": _integer("最多搜索补全多少轮。", minimum=1, maximum=5),
+                "max_fetches_per_round": _integer("每轮最多抓取多少个候选页面。", minimum=1, maximum=10),
+                "source_policy": _string("来源策略：official_only、trusted_first、official_first 或 any。默认 official_only。"),
+                "max_seconds": _number("web_gap_fill overall timeout in seconds. When exhausted, the tool returns stop_reason=timeout_reached."),
+            },
+            ["gap_items"],
         ),
     ),
 }

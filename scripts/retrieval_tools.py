@@ -15,11 +15,16 @@ an exact province and subject type.
 from __future__ import annotations
 
 import argparse
+import io
 import json
+import os
+import re
 import sys
+import time
 from pathlib import Path
-from typing import Any
-from urllib.parse import urlparse
+from typing import Any, Callable
+from urllib.parse import urlencode, urlparse
+from urllib.request import Request, urlopen
 
 # Direct CLI execution (`python scripts/retrieval_tools.py ...`) makes Python
 # treat `scripts/` as the import root.  The function-call tools import shared
@@ -298,7 +303,333 @@ _SOURCE_TRACE_REGISTRY = {
         "scope_notes": ["缺口检测只描述当前本地库无法支撑的回答边界。"],
         "reliability": "A",
     },
+    "web_evidence_search": {
+        "source_tables": [],
+        "scope_notes": ["外部网页搜索只提供候选证据链接，不等于本地库已入库事实。"],
+        "reliability": "B",
+    },
+    "web_evidence_fetch": {
+        "source_tables": [],
+        "scope_notes": ["外部网页正文抓取和证据片段抽取，只能作为可引用外部证据，不等于本地库已入库事实。"],
+        "reliability": "B+",
+    },
+    "web_gap_fill": {
+        "source_tables": [],
+        "scope_notes": ["网页缺口补全会围绕结构化数据缺口进行多轮搜索、抓取和证据评估；未接受证据不能写成事实。"],
+        "reliability": "B+",
+    },
 }
+
+
+TOOL_CORE_FIELDS = {
+    "school_major_list": ["data.majors"],
+    "major_school_list": ["data.schools"],
+    "admission_history": ["data.records"],
+    "rank_to_school_match": ["data.buckets"],
+    "rank_to_major_match": ["data.buckets"],
+}
+
+
+TOOL_CORE_AVAILABLE_FIELDS = {
+    "school_major_list": {"data.majors": "school_major_catalog"},
+    "major_school_list": {"data.schools": "major_school_relation"},
+    "admission_history": {"data.records": "admission_history"},
+    "rank_to_school_match": {"data.buckets": "school_admission_match"},
+    "rank_to_major_match": {"data.buckets": "major_admission_match"},
+}
+
+
+TOOL_GAP_QUESTION_TYPE = {
+    "school_major_list": "school_major_list",
+    "major_school_list": "major_school_list",
+    "admission_history": "admission_history",
+    "school_major_profile": "school_major_profile",
+    "major_market_reference": "major_market_reference",
+    "civil_service_role_search": "civil_service_role_search",
+    "comparison_query": "comparison_query",
+    "major_streaming_policy_lookup": "major_streaming_policy_lookup",
+    "civil_service_mapping": "civil_service_mapping",
+    "policy_rule_lookup": "policy_rule_lookup",
+}
+
+
+GAP_REGISTRY: dict[str, dict[str, Any]] = {
+    "school_basic": {
+        "label": "学校基础信息",
+        "question_types": ["school_major_profile", "comparison_query"],
+        "required_fields": ["school_basic"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official", "chsi"],
+        "evidence_requirements": ["school_name", "source_url", "evidence_snippet"],
+    },
+    "major_basic": {
+        "label": "专业基础信息",
+        "question_types": ["school_major_profile", "comparison_query"],
+        "required_fields": ["major_basic"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["chsi", "official"],
+        "evidence_requirements": ["major_name_or_code", "source_url", "evidence_snippet"],
+    },
+    "school_major_relation": {
+        "label": "学校-专业开设关系",
+        "question_types": ["school_major_profile"],
+        "required_fields": ["school_major"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official", "chsi"],
+        "evidence_requirements": ["school_name", "major_name_or_code", "source_url", "evidence_snippet"],
+    },
+    "subject_eval": {
+        "label": "教育部学科评估",
+        "question_types": ["school_major_profile"],
+        "required_fields": ["subject_eval"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official", "chsi"],
+        "evidence_requirements": ["school_name", "discipline_name", "source_url", "evidence_snippet"],
+    },
+    "school_major_salary": {
+        "label": "校专业级薪资分布",
+        "question_types": ["school_major_profile"],
+        "required_fields": ["school_major_salary"],
+        "resolvable_by_web": False,
+        "non_resolvable_reason": "校专业级薪资通常不是稳定公开数据，不能通过网页自动确认。",
+        "preferred_source_types": [],
+        "evidence_requirements": [],
+    },
+    "school_major_regions": {
+        "label": "校专业级工作地域分布",
+        "question_types": ["school_major_profile"],
+        "required_fields": ["school_major_regions"],
+        "resolvable_by_web": False,
+        "non_resolvable_reason": "校专业级就业地域通常不是稳定公开数据，不能通过网页自动确认。",
+        "preferred_source_types": [],
+        "evidence_requirements": [],
+    },
+    "top_companies": {
+        "label": "校专业级Top对口公司",
+        "question_types": ["school_major_profile"],
+        "required_fields": ["top_companies"],
+        "resolvable_by_web": False,
+        "non_resolvable_reason": "校专业级对口公司通常不是稳定公开数据，不能通过网页自动确认。",
+        "preferred_source_types": [],
+        "evidence_requirements": [],
+    },
+    "civil_service_mapping_gap": {
+        "label": "考公岗位映射",
+        "question_types": ["school_major_profile"],
+        "required_fields": ["civil_service_mapping"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["exam_authority", "official"],
+        "evidence_requirements": ["major_name_or_code", "source_url", "evidence_snippet"],
+    },
+    "transfer_policy": {
+        "label": "转专业政策",
+        "question_types": ["school_major_profile"],
+        "required_fields": ["transfer_policy"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official"],
+        "evidence_requirements": ["school_name", "policy_text", "source_url", "evidence_snippet"],
+    },
+    "streaming_ratio": {
+        "label": "真实分流比例",
+        "question_types": ["school_major_profile", "major_streaming_policy_lookup"],
+        "required_fields": ["streaming_ratio"],
+        "resolvable_by_web": False,
+        "non_resolvable_reason": "真实分流比例通常不是稳定公开数据，不能通过网页自动确认。",
+        "preferred_source_types": [],
+        "evidence_requirements": [],
+    },
+    "unpopular_major_ratio": {
+        "label": "分流到冷门专业比例",
+        "question_types": ["major_streaming_policy_lookup"],
+        "required_fields": ["unpopular_major_ratio"],
+        "resolvable_by_web": False,
+        "non_resolvable_reason": "冷门专业分流比例通常不是稳定公开数据，不能通过网页自动确认。",
+        "preferred_source_types": [],
+        "evidence_requirements": [],
+    },
+    "official_major_intro": {
+        "label": "学校官网专业介绍证据链",
+        "question_types": ["school_major_profile"],
+        "required_fields": ["official_major_intro"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official"],
+        "evidence_requirements": ["school_name", "major_name_or_code", "source_url", "evidence_snippet"],
+    },
+    "major_school_relation": {
+        "label": "专业开设院校关系",
+        "question_types": ["major_school_list"],
+        "required_fields": ["major_school_relation"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["chsi", "exam_authority", "official"],
+        "evidence_requirements": [
+            "school_name",
+            "major_name_or_code",
+            "undergraduate_level",
+            "source_url",
+            "evidence_snippet",
+        ],
+    },
+    "school_major_catalog": {
+        "label": "学校开设专业目录",
+        "question_types": ["school_major_list"],
+        "required_fields": ["school_major_catalog"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official", "chsi"],
+        "evidence_requirements": ["school_name", "major_name_or_code", "source_url", "evidence_snippet"],
+    },
+    "admission_history": {
+        "label": "专业录取历史",
+        "question_types": ["admission_history"],
+        "required_fields": ["admission_history"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["exam_authority", "official"],
+        "evidence_requirements": ["school_name", "major_name", "province", "year", "score_or_rank", "source_url"],
+    },
+    "official_admission_rule": {
+        "label": "官方招生章程原文",
+        "question_types": ["policy_rule_lookup"],
+        "required_fields": ["official_admission_rule"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official"],
+        "evidence_requirements": ["school_name", "policy_text", "source_url", "evidence_snippet"],
+    },
+    "single_subject_limit": {
+        "label": "单科成绩限制",
+        "question_types": ["policy_rule_lookup"],
+        "required_fields": ["single_subject_limit"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official"],
+        "evidence_requirements": ["school_name", "policy_text", "source_url", "evidence_snippet"],
+    },
+    "physical_exam_limit": {
+        "label": "身体条件限制",
+        "question_types": ["policy_rule_lookup"],
+        "required_fields": ["physical_exam_limit"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official"],
+        "evidence_requirements": ["school_name", "policy_text", "source_url", "evidence_snippet"],
+    },
+    "language_limit": {
+        "label": "外语语种限制",
+        "question_types": ["policy_rule_lookup"],
+        "required_fields": ["language_limit"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official"],
+        "evidence_requirements": ["school_name", "policy_text", "source_url", "evidence_snippet"],
+    },
+    "market_snapshot": {
+        "label": "专业市场观察数据",
+        "question_types": ["major_market_reference"],
+        "required_fields": ["market_snapshot"],
+        "resolvable_by_web": False,
+        "non_resolvable_reason": "该字段来自本地已清洗市场样本，不应由临时网页搜索补成事实。",
+        "preferred_source_types": [],
+        "evidence_requirements": [],
+    },
+    "job_samples": {
+        "label": "招聘岗位样本",
+        "question_types": ["major_market_reference"],
+        "required_fields": ["job_samples"],
+        "resolvable_by_web": False,
+        "non_resolvable_reason": "招聘样本需要稳定采集和清洗，不能由临时搜索结果替代。",
+        "preferred_source_types": [],
+        "evidence_requirements": [],
+    },
+    "official_employment": {
+        "label": "官方就业质量报告佐证",
+        "question_types": ["major_market_reference"],
+        "required_fields": ["official_employment"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official"],
+        "evidence_requirements": ["school_name", "source_url", "evidence_snippet"],
+    },
+    "role_candidates": {
+        "label": "考公岗位候选",
+        "question_types": ["civil_service_role_search"],
+        "required_fields": ["role_candidates"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["exam_authority", "official"],
+        "evidence_requirements": ["major_name_or_code", "source_url", "evidence_snippet"],
+    },
+    "official_role_table": {
+        "label": "官方岗位表来源",
+        "question_types": ["civil_service_role_search", "civil_service_mapping"],
+        "required_fields": ["official_role_table"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["exam_authority", "official"],
+        "evidence_requirements": ["source_url", "evidence_snippet"],
+    },
+    "manual_mapping": {
+        "label": "专业代码人工确认映射",
+        "question_types": ["civil_service_role_search"],
+        "required_fields": ["manual_mapping"],
+        "resolvable_by_web": False,
+        "non_resolvable_reason": "人工确认映射需要本地规则审核，不能由网页搜索自动替代。",
+        "preferred_source_types": [],
+        "evidence_requirements": [],
+    },
+    "target_profiles": {
+        "label": "对比对象画像",
+        "question_types": ["comparison_query"],
+        "required_fields": ["target_profiles"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official", "chsi"],
+        "evidence_requirements": ["source_url", "evidence_snippet"],
+    },
+    "admission_context": {
+        "label": "录取历史上下文",
+        "question_types": ["comparison_query"],
+        "required_fields": ["admission_context"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["exam_authority", "official"],
+        "evidence_requirements": ["source_url", "evidence_snippet"],
+    },
+    "employment_context": {
+        "label": "就业/升学对比口径",
+        "question_types": ["comparison_query"],
+        "required_fields": ["employment_context"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official"],
+        "evidence_requirements": ["source_url", "evidence_snippet"],
+    },
+    "decision_preferences": {
+        "label": "考生偏好权重",
+        "question_types": ["comparison_query"],
+        "required_fields": ["decision_preferences"],
+        "resolvable_by_web": False,
+        "non_resolvable_reason": "偏好权重必须由用户提供，不能通过网页搜索补全。",
+        "preferred_source_types": [],
+        "evidence_requirements": [],
+    },
+    "official_streaming_policy": {
+        "label": "官方大类分流政策",
+        "question_types": ["major_streaming_policy_lookup"],
+        "required_fields": ["official_streaming_policy"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["official"],
+        "evidence_requirements": ["school_name", "policy_text", "source_url", "evidence_snippet"],
+    },
+    "eligibility_rules": {
+        "label": "正式可报条件判定",
+        "question_types": ["civil_service_mapping"],
+        "required_fields": ["eligibility_rules"],
+        "resolvable_by_web": True,
+        "preferred_source_types": ["exam_authority", "official"],
+        "evidence_requirements": ["source_url", "evidence_snippet"],
+    },
+    "manual_major_mapping": {
+        "label": "专业代码人工确认映射",
+        "question_types": ["civil_service_mapping"],
+        "required_fields": ["manual_major_mapping"],
+        "resolvable_by_web": False,
+        "non_resolvable_reason": "专业代码人工确认映射需要本地审核规则，不能由网页搜索自动替代。",
+        "preferred_source_types": [],
+        "evidence_requirements": [],
+    },
+}
+
+
+_MISSING_PATH = object()
 
 
 def tool_result(
@@ -352,6 +683,124 @@ def _merge_source_tables(*table_groups: list[str] | tuple[str, ...]) -> list[str
 def _source_trace_for_tool(tool_name: str) -> dict[str, Any] | None:
     trace = _SOURCE_TRACE_REGISTRY.get(tool_name)
     return dict(trace) if trace else None
+
+
+def _get_path_value(payload: dict[str, Any], path: str) -> Any:
+    value: Any = payload
+    for part in path.split("."):
+        if isinstance(value, dict) and part in value:
+            value = value[part]
+        else:
+            return _MISSING_PATH
+    return value
+
+
+def _core_field_empty(payload: dict[str, Any], field_path: str) -> bool:
+    value = _get_path_value(payload, field_path)
+    if value is _MISSING_PATH:
+        return True
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) == 0
+    return False
+
+
+def _infer_available_fields(tool_name: str, result: dict[str, Any]) -> list[str]:
+    available: list[str] = []
+    field_map = TOOL_CORE_AVAILABLE_FIELDS.get(tool_name, {})
+    for field_path in TOOL_CORE_FIELDS.get(tool_name, []):
+        if not _core_field_empty(result, field_path):
+            available.append(field_map.get(field_path, field_path))
+    return sorted(_distinct_texts(available))
+
+
+def _supported_gap_question_types() -> list[str]:
+    supported: set[str] = set()
+    for definition in GAP_REGISTRY.values():
+        supported.update(str(item) for item in definition.get("question_types", []))
+    return sorted(supported)
+
+
+def _gap_items_for_question_type(
+    question_type: str,
+    available_fields: set[str],
+    *,
+    normalized_slots: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    gap_items: list[dict[str, Any]] = []
+    for gap_key, definition in GAP_REGISTRY.items():
+        if question_type not in definition.get("question_types", []):
+            continue
+        required_fields = [str(field) for field in definition.get("required_fields", [])]
+        missing_fields = [field for field in required_fields if field not in available_fields]
+        if not missing_fields:
+            continue
+        item = {
+            "gap_key": gap_key,
+            "label": definition.get("label", gap_key),
+            "question_type": question_type,
+            "missing_fields": missing_fields,
+            "resolvable_by_web": bool(definition.get("resolvable_by_web")),
+            "preferred_source_types": list(definition.get("preferred_source_types") or []),
+            "evidence_requirements": list(definition.get("evidence_requirements") or []),
+        }
+        if definition.get("non_resolvable_reason"):
+            item["non_resolvable_reason"] = definition["non_resolvable_reason"]
+        if normalized_slots:
+            item["normalized_slots"] = dict(normalized_slots)
+        gap_items.append(item)
+    return gap_items
+
+
+def _detect_tool_result_gaps(tool_name: str, result: dict[str, Any]) -> list[dict[str, Any]]:
+    question_type = TOOL_GAP_QUESTION_TYPE.get(tool_name, tool_name)
+    if question_type not in _supported_gap_question_types():
+        return []
+
+    status = str(result.get("status") or "")
+    if status in {"error", "skipped"}:
+        return []
+    data_gaps = result.get("data_gaps") if isinstance(result.get("data_gaps"), list) else []
+    needs_clarification = (
+        result.get("needs_clarification") if isinstance(result.get("needs_clarification"), list) else []
+    )
+    core_empty = any(_core_field_empty(result, field_path) for field_path in TOOL_CORE_FIELDS.get(tool_name, []))
+    should_detect = status in {"not_found", "partial", "needs_clarification"} or bool(data_gaps) or core_empty
+    if not should_detect:
+        return []
+
+    available = set(_infer_available_fields(tool_name, result))
+    normalized_slots = result.get("normalized_slots") if isinstance(result.get("normalized_slots"), dict) else {}
+    gap_items = _gap_items_for_question_type(question_type, available, normalized_slots=normalized_slots)
+
+    triggers: list[str] = []
+    if status == "not_found":
+        triggers.append("status_not_found")
+    if core_empty:
+        triggers.append("core_result_empty")
+    if data_gaps:
+        triggers.append("explicit_data_gaps")
+    if needs_clarification:
+        triggers.append("missing_required_slot")
+    if status == "partial" and not triggers:
+        triggers.append("status_partial")
+
+    enriched: list[dict[str, Any]] = []
+    for item in gap_items:
+        enriched.append(
+            item
+            | {
+                "source_tool": tool_name,
+                "trigger": triggers[0] if triggers else "unknown",
+                "triggers": triggers,
+                "source_data_gaps": list(data_gaps),
+                "source_status": status,
+            }
+        )
+    return enriched
 
 
 def _coerce_positive_limit(limit: Any, default: int = 5) -> int:
@@ -540,6 +989,59 @@ def _has_same_name_cross_level(rows: list[dict[str, Any]], selected: dict[str, A
     return len({_major_level_rank(row) for row in same_name_rows}) > 1
 
 
+def _major_resolution_payload(
+    rows: list[dict[str, Any]],
+    selected: dict[str, Any],
+    query_text: str,
+) -> dict[str, Any]:
+    """Describe how a major was resolved without changing the selected row."""
+
+    level_summary: dict[tuple[int, str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (
+            _major_level_rank(row),
+            _text(row.get("type_name")),
+            _text(row.get("level2_name")),
+        )
+        summary = level_summary.setdefault(
+            key,
+            {
+                "level_rank": key[0],
+                "type_name": key[1] or None,
+                "level2_name": key[2] or None,
+                "count": 0,
+                "sample_codes": [],
+                "sample_names": [],
+            },
+        )
+        summary["count"] += 1
+        code = _optional_text(row.get("code") or row.get("special_id"))
+        name = _optional_text(row.get("special_name"))
+        if code and code not in summary["sample_codes"] and len(summary["sample_codes"]) < 3:
+            summary["sample_codes"].append(code)
+        if name and name not in summary["sample_names"] and len(summary["sample_names"]) < 3:
+            summary["sample_names"].append(name)
+
+    level_ranks = {_major_level_rank(row) for row in rows}
+    return {
+        "selected_code": _optional_text(selected.get("code") or selected.get("special_id")),
+        "selected_special_id": _optional_text(selected.get("special_id")),
+        "selected_name": _optional_text(selected.get("special_name")),
+        "selected_type_name": _optional_text(selected.get("type_name")),
+        "selected_level2_name": _optional_text(selected.get("level2_name")),
+        "selected_level3_name": _optional_text(selected.get("level3_name")),
+        "selected_degree": _optional_text(selected.get("degree")),
+        "selected_level_rank": _major_level_rank(selected),
+        "candidate_count": len(rows),
+        "cross_level_candidates": len(level_ranks) > 1,
+        "same_name_cross_level": _has_same_name_cross_level(rows, selected, query_text),
+        "candidate_level_summary": sorted(
+            level_summary.values(),
+            key=lambda item: (item["level_rank"], item["type_name"] or "", item["level2_name"] or ""),
+        ),
+    }
+
+
 class RetrievalTools:
     """Collection of local retrieval functions callable by a future agent.
 
@@ -549,8 +1051,15 @@ class RetrievalTools:
     testable without requiring a live database for every unit test.
     """
 
-    def __init__(self, client: Any) -> None:
+    def __init__(
+        self,
+        client: Any,
+        web_search_fetcher: Callable[[str, float], bytes | str] | None = None,
+        web_evidence_judge: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> None:
         self.client = client
+        self.web_search_fetcher = web_search_fetcher or _fetch_url_bytes
+        self.web_evidence_judge = web_evidence_judge
 
     def school_lookup(self, school_text: str, limit: int = 5) -> dict[str, Any]:
         """Resolve a school name/code to canonical school rows."""
@@ -658,7 +1167,11 @@ class RetrievalTools:
                     "major_code": selected.get("code"),
                     "normalized_major_text": normalized_text,
                 },
-                data={"selected_major": selected, "candidates": alias_rows[:safe_limit]},
+                data={
+                    "selected_major": selected,
+                    "candidates": alias_rows[:safe_limit],
+                    "major_resolution": _major_resolution_payload(alias_rows, selected, normalized_text),
+                },
                 scope_notes=["专业实体解析来自 edu_major 和 entity_aliases；短简称只使用已确认别名，不直接做短词模糊匹配。"],
                 source_tables=["edu_major", "entity_aliases"],
             )
@@ -701,7 +1214,11 @@ class RetrievalTools:
                 "major_code": selected.get("code"),
                 "normalized_major_text": normalized_text,
             },
-            data={"selected_major": selected, "candidates": rows[:safe_limit]},
+            data={
+                "selected_major": selected,
+                "candidates": rows[:safe_limit],
+                "major_resolution": _major_resolution_payload(rows, selected, normalized_text),
+            },
             scope_notes=["专业实体解析来自 edu_major 和 entity_aliases；短简称只使用已确认别名，不直接做短词模糊匹配。"],
             source_tables=["edu_major", "entity_aliases"],
             warnings=warnings,
@@ -1096,8 +1613,8 @@ class RetrievalTools:
     def score_to_rank(
         self,
         province: str,
-        subject_type: str,
-        score: int | float | str,
+        subject_type: str | None = None,
+        score: int | float | str | None = None,
         year: int | None = None,
     ) -> dict[str, Any]:
         """Convert score to rank range in one province/subject/year.
@@ -1107,7 +1624,7 @@ class RetrievalTools:
         students.  Later matching should use rank, not raw score.
         """
 
-        missing = _missing_slots({"province": province, "subject_type": subject_type, "score": score})
+        missing = _missing_slots({"province": province, "score": score})
         if missing:
             return _needs(
                 "score_to_rank",
@@ -1125,25 +1642,80 @@ class RetrievalTools:
                 warnings=["暂不认识该省份名称，请提供省份标准名称或 province_id。"],
             )
 
-        subject_type_candidates = _subject_type_candidates(subject_type)
-        rows = self.client.query(_score_to_rank_sql(province_id, subject_type_candidates, score, year))
+        score_int = _score_to_rank_score_int(score)
+        if score_int is None:
+            return tool_result(
+                "score_to_rank",
+                "needs_clarification",
+                {"province": province, "subject_type": subject_type, "score": score, "year": year},
+                needs_clarification=["score"],
+                warnings=["分数必须是明确的整数，不能使用小数、中文数字或模糊表述。"],
+            )
+
+        subject_resolution = _resolve_score_rank_subject(self.client, province_id, subject_type, year)
+        if not subject_resolution["rank_subject_type"]:
+            return tool_result(
+                "score_to_rank",
+                "needs_clarification",
+                {"province": province, "subject_type": subject_type, "score": score, "year": year},
+                normalized_slots={
+                    "province": province,
+                    "province_id": province_id,
+                    **subject_resolution["normalized_slots"],
+                },
+                source_tables=["edu_score_rank"],
+                needs_clarification=["subject_type"],
+                warnings=subject_resolution["warnings"],
+            )
+
+        rank_subject_type = subject_resolution["rank_subject_type"]
+        subject_type_candidates = subject_resolution["subject_type_candidates"]
+        rows = self.client.query(_score_to_rank_sql(province_id, subject_type_candidates, score_int, year))
         if not rows:
             return tool_result(
                 "score_to_rank",
                 "not_found",
                 {"province": province, "subject_type": subject_type, "score": score, "year": year},
-                normalized_slots={"province_id": province_id, "subject_type_candidates": subject_type_candidates},
+                normalized_slots={
+                    "province": province,
+                    "province_id": province_id,
+                    **subject_resolution["normalized_slots"],
+                    "rank_subject_type": rank_subject_type,
+                    "subject_type_candidates": subject_type_candidates,
+                },
                 source_tables=["edu_score_rank"],
                 warnings=["本地库未命中对应一分一段记录。"],
             )
 
         row = rows[0]
         matched_subject_type = _text(row.get("subject_type"))
-        warnings = []
-        if matched_subject_type and matched_subject_type != _text(subject_type):
+        warnings = list(subject_resolution["warnings"])
+        matched_year = _text(row.get("year"))
+        matched_score = _as_int(row.get("score"))
+        duplicate_rows = [
+            other
+            for other in rows[1:]
+            if _text(other.get("year")) == matched_year
+            and _text(other.get("subject_type")) == matched_subject_type
+            and _as_int(other.get("score")) == matched_score
+        ]
+        if duplicate_rows:
+            batch_types = _distinct_texts([row.get("batch_type"), *(other.get("batch_type") for other in duplicate_rows)])
+            batch_note = f"；命中批次：{'、'.join(batch_types)}" if batch_types else ""
+            warnings.append(
+                f"本地一分一段表同一省份/科类/年份/分数存在多条记录{batch_note}；当前返回排序后的第一条，请结合本科/专科等批次口径复核。"
+            )
+        if (
+            _text(subject_type)
+            and matched_subject_type
+            and matched_subject_type != _text(subject_type)
+            and not subject_resolution["selected_subjects"]
+        ):
             warnings.append(
                 f"输入科类为“{subject_type}”，已按本地一分一段表命中的科类“{matched_subject_type}”返回；请结合该省当年新高考/传统文理科口径复核。"
             )
+        if year is None and matched_year:
+            warnings.append(f"未提供年份，已按本地库命中的年份 {matched_year} 返回；分数位次请优先按目标高考年份复核。")
         return tool_result(
             "score_to_rank",
             "ok",
@@ -1152,6 +1724,8 @@ class RetrievalTools:
                 "province": province,
                 "province_id": province_id,
                 "subject_type": subject_type,
+                **subject_resolution["normalized_slots"],
+                "rank_subject_type": rank_subject_type,
                 "matched_subject_type": matched_subject_type or subject_type,
                 "year": row.get("year"),
             },
@@ -1207,6 +1781,7 @@ class RetrievalTools:
         applicant_rank = _as_int(rank)
         score_rank_result: dict[str, Any] | None = None
         rank_source = "provided_rank" if applicant_rank else ""
+        subject_resolution: dict[str, Any] | None = None
         if applicant_rank is None:
             if score in (None, ""):
                 return _needs(
@@ -1220,25 +1795,44 @@ class RetrievalTools:
                     },
                     ["rank_or_score"],
                 )
-            if not subject_type:
-                return _needs(
-                    "rank_to_school_match",
-                    {
-                        "province": province,
-                        "subject_type": subject_type,
-                        "score": score,
-                        "rank": rank,
-                        "year": year,
-                    },
-                    ["subject_type"],
-                )
 
             score_rank_result = self.score_to_rank(province, subject_type, score, year)
             if score_rank_result["status"] != "ok":
                 return score_rank_result | {"tool_name": "rank_to_school_match"}
             applicant_rank = _as_int(score_rank_result["data"]["rank_range"].get("lowest_rank"))
-            subject_type = score_rank_result.get("normalized_slots", {}).get("matched_subject_type") or subject_type
+            score_rank_normalized = score_rank_result.get("normalized_slots", {})
+            subject_type = (
+                score_rank_normalized.get("rank_subject_type")
+                or score_rank_normalized.get("matched_subject_type")
+                or subject_type
+            )
             rank_source = "score_to_rank"
+        else:
+            province_id = _province_id(province)
+            if province_id:
+                subject_resolution = _resolve_score_rank_subject(self.client, province_id, subject_type, year)
+                if not subject_resolution["rank_subject_type"]:
+                    return tool_result(
+                        "rank_to_school_match",
+                        "needs_clarification",
+                        {
+                            "province": province,
+                            "subject_type": subject_type,
+                            "score": score,
+                            "rank": rank,
+                            "year": year,
+                        },
+                        normalized_slots={
+                            "province": province,
+                            "province_id": province_id,
+                            "rank": applicant_rank,
+                            **subject_resolution["normalized_slots"],
+                        },
+                        source_tables=["edu_score_rank", "edu_school_admission_stats"],
+                        needs_clarification=["subject_type"],
+                        warnings=subject_resolution["warnings"],
+                    )
+                subject_type = subject_resolution["rank_subject_type"]
 
         if applicant_rank is None:
             return _needs(
@@ -1283,12 +1877,18 @@ class RetrievalTools:
             "school_level_filter": school_level_filter,
             "limit": limit,
         }
+        subject_normalized = _rank_subject_normalized(subject_resolution, score_rank_result)
         if not selected_rows:
             return tool_result(
                 "rank_to_school_match",
                 "not_found",
                 input_data,
-                normalized_slots={"province": province, "subject_type": subject_type, "rank": applicant_rank},
+                normalized_slots={
+                    "province": province,
+                    "subject_type": subject_type,
+                    "rank": applicant_rank,
+                    **subject_normalized,
+                },
                 data={
                     "applicant": _applicant_rank_payload(
                         province, subject_type, score, applicant_rank, rank_source, score_rank_result
@@ -1309,12 +1909,18 @@ class RetrievalTools:
             warnings.append("本地库缺少请求年份的录取结果，已使用最近可用历史年份作为参考。")
         if subject_unknown_count:
             warnings.append("部分历史记录没有科类字段，已按省份历史参考纳入，需谨慎解读。")
+        warnings.extend(_rank_subject_warnings(subject_resolution, score_rank_result))
 
         return tool_result(
             "rank_to_school_match",
             "ok",
             input_data,
-            normalized_slots={"province": province, "subject_type": subject_type, "rank": applicant_rank},
+            normalized_slots={
+                "province": province,
+                "subject_type": subject_type,
+                "rank": applicant_rank,
+                **subject_normalized,
+            },
             data={
                 "applicant": _applicant_rank_payload(
                     province, subject_type, score, applicant_rank, rank_source, score_rank_result
@@ -1374,9 +1980,51 @@ class RetrievalTools:
                 missing,
             )
 
+        if not _is_positive_int(limit):
+            return tool_result(
+                "rank_to_major_match",
+                "needs_clarification",
+                {
+                    "province": province,
+                    "major_text": major_text,
+                    "subject_type": subject_type,
+                    "score": score,
+                    "rank": rank,
+                    "year": year,
+                    "reference_years": reference_years,
+                    "preferred_regions": preferred_regions,
+                    "school_level_filter": school_level_filter,
+                    "limit": limit,
+                },
+                needs_clarification=["limit"],
+                warnings=["limit 必须是正整数。"],
+            )
+        safe_limit = int(str(limit).strip())
+
+        if rank not in (None, "") and not _is_positive_int(rank):
+            return tool_result(
+                "rank_to_major_match",
+                "needs_clarification",
+                {
+                    "province": province,
+                    "major_text": major_text,
+                    "subject_type": subject_type,
+                    "score": score,
+                    "rank": rank,
+                    "year": year,
+                    "reference_years": reference_years,
+                    "preferred_regions": preferred_regions,
+                    "school_level_filter": school_level_filter,
+                    "limit": safe_limit,
+                },
+                needs_clarification=["rank"],
+                warnings=["位次必须是正整数。"],
+            )
+
         applicant_rank = _as_int(rank)
         score_rank_result: dict[str, Any] | None = None
         rank_source = "provided_rank" if applicant_rank else ""
+        subject_resolution: dict[str, Any] | None = None
         if applicant_rank is None:
             if score in (None, ""):
                 return _needs(
@@ -1391,31 +2039,54 @@ class RetrievalTools:
                     },
                     ["rank_or_score"],
                 )
-            if not subject_type:
-                return _needs(
-                    "rank_to_major_match",
-                    {
-                        "province": province,
-                        "major_text": major_text,
-                        "subject_type": subject_type,
-                        "score": score,
-                        "rank": rank,
-                        "year": year,
-                    },
-                    ["subject_type"],
-                )
+        else:
+            province_id = _province_id(province)
+            if province_id:
+                subject_resolution = _resolve_score_rank_subject(self.client, province_id, subject_type, year)
+                if not subject_resolution["rank_subject_type"]:
+                    return tool_result(
+                        "rank_to_major_match",
+                        "needs_clarification",
+                        {
+                            "province": province,
+                            "major_text": major_text,
+                            "subject_type": subject_type,
+                            "score": score,
+                            "rank": rank,
+                            "year": year,
+                        },
+                        normalized_slots={
+                            "province": province,
+                            "rank": applicant_rank,
+                            **subject_resolution["normalized_slots"],
+                        },
+                        source_tables=["edu_score_rank", "edu_major", "edu_school_admission_stats"],
+                        needs_clarification=["subject_type"],
+                        warnings=subject_resolution["warnings"],
+                    )
+                subject_type = subject_resolution["rank_subject_type"]
 
         major_result = self.major_lookup(major_text, limit=1)
         if major_result["status"] != "ok":
             return major_result | {"tool_name": "rank_to_major_match"}
         major = major_result["data"]["selected_major"]
+        major_resolution = major_result["data"].get("major_resolution") or _major_resolution_payload(
+            [major],
+            major,
+            normalize_major_query(major_text),
+        )
 
         if applicant_rank is None:
             score_rank_result = self.score_to_rank(province, subject_type, score, year)
             if score_rank_result["status"] != "ok":
                 return score_rank_result | {"tool_name": "rank_to_major_match"}
             applicant_rank = _as_int(score_rank_result["data"]["rank_range"].get("lowest_rank"))
-            subject_type = score_rank_result.get("normalized_slots", {}).get("matched_subject_type") or subject_type
+            score_rank_normalized = score_rank_result.get("normalized_slots", {})
+            subject_type = (
+                score_rank_normalized.get("rank_subject_type")
+                or score_rank_normalized.get("matched_subject_type")
+                or subject_type
+            )
             rank_source = "score_to_rank"
 
         if applicant_rank is None:
@@ -1443,10 +2114,10 @@ class RetrievalTools:
                 reference_years=reference_years,
                 preferred_regions=preferred_regions,
                 school_level_filter=school_level_filter,
-                limit=max(limit * 10, 100),
+                limit=max(safe_limit * 10, 100),
             )
         )
-        buckets, selected_rows = _bucket_major_matches(rows, applicant_rank, limit)
+        buckets, selected_rows = _bucket_major_matches(rows, applicant_rank, safe_limit)
         reference_year_values = sorted(
             {year_value for row in selected_rows if (year_value := _as_int(row.get("year"))) is not None},
             reverse=True,
@@ -1463,7 +2134,7 @@ class RetrievalTools:
             "reference_years": reference_years,
             "preferred_regions": preferred_regions,
             "school_level_filter": school_level_filter,
-            "limit": limit,
+            "limit": safe_limit,
         }
         source_tables = _merge_source_tables(
             major_result["source_tables"],
@@ -1475,6 +2146,7 @@ class RetrievalTools:
             "province": province,
             "subject_type": subject_type,
             "rank": applicant_rank,
+            **_rank_subject_normalized(subject_resolution, score_rank_result),
         }
 
         if not selected_rows:
@@ -1488,19 +2160,24 @@ class RetrievalTools:
                         province, subject_type, score, applicant_rank, rank_source, score_rank_result
                     ),
                     "major": major,
+                    "major_resolution": major_resolution,
                     "buckets": {"rush": [], "stable": [], "safe": []},
                 },
                 data_gaps=["本地专业录取历史"],
                 source_tables=source_tables,
-                warnings=["本地库未命中该省份/科类/专业可用于位次匹配的专业历史录取参考。"],
+                warnings=_distinct_texts(
+                    list(major_result.get("warnings") or [])
+                    + ["本地库未命中该省份/科类/专业可用于位次匹配的专业历史录取参考。"]
+                ),
             )
 
         subject_unknown_count = sum(1 for row in selected_rows if not _text(row.get("subject_type")))
-        warnings = []
+        warnings = list(major_result.get("warnings") or [])
         if history_fallback:
             warnings.append("本地库缺少请求年份的专业录取结果，已使用最近可用历史年份作为参考。")
         if subject_unknown_count:
             warnings.append("部分专业历史记录没有科类字段，已按省份历史参考纳入，需谨慎解读。")
+        warnings.extend(_rank_subject_warnings(subject_resolution, score_rank_result))
 
         return tool_result(
             "rank_to_major_match",
@@ -1512,6 +2189,7 @@ class RetrievalTools:
                     province, subject_type, score, applicant_rank, rank_source, score_rank_result
                 ),
                 "major": major,
+                "major_resolution": major_resolution,
                 "reference": {
                     "requested_year": year,
                     "reference_years": reference_year_values,
@@ -1531,7 +2209,7 @@ class RetrievalTools:
                 "专业名称包含大类、试验班、方向等变体时，需要结合当年招生计划和专业组继续确认。",
             ],
             source_tables=source_tables,
-            warnings=warnings,
+            warnings=_distinct_texts(warnings),
         )
 
     def specialty_group_lookup(
@@ -1553,34 +2231,93 @@ class RetrievalTools:
         adjustment exposure.
         """
 
+        input_data = {
+            "school_text": school_text,
+            "major_text": major_text,
+            "province": province,
+            "subject_type": subject_type,
+            "year": year,
+            "group_code": group_code,
+            "limit": limit,
+        }
         missing = _missing_slots({"school_text": school_text})
         if missing:
             return _needs(
                 "specialty_group_lookup",
-                {
-                    "school_text": school_text,
-                    "major_text": major_text,
-                    "province": province,
-                    "subject_type": subject_type,
-                    "year": year,
-                    "group_code": group_code,
-                },
+                input_data,
                 missing,
             )
 
-        school_result = self.school_lookup(school_text, limit=1)
-        if school_result["status"] != "ok":
-            return school_result | {"tool_name": "specialty_group_lookup"}
+        if not _is_positive_int(limit):
+            return tool_result(
+                "specialty_group_lookup",
+                "needs_clarification",
+                input_data,
+                data={"school": {}, "major": {}, "groups": []},
+                needs_clarification=["limit"],
+                warnings=["limit 必须是正整数，并且只表示最多返回多少个专业组。"],
+            )
+        safe_limit = int(str(limit).strip())
+        input_data["limit"] = safe_limit
 
+        school_result = self.school_lookup(school_text, limit=5)
+        if school_result["status"] != "ok":
+            school_data = school_result.get("data") or {}
+            return tool_result(
+                "specialty_group_lookup",
+                school_result["status"],
+                input_data,
+                normalized_slots=school_result.get("normalized_slots") or {},
+                data={
+                    "school": school_data.get("selected_school") or {},
+                    "major": {},
+                    "groups": [],
+                    "school_candidates": school_data.get("candidates") or [],
+                },
+                scope_notes=school_result.get("scope_notes") or [],
+                data_gaps=school_result.get("data_gaps") or [],
+                needs_clarification=school_result.get("needs_clarification") or [],
+                source_tables=school_result.get("source_tables") or [],
+                warnings=school_result.get("warnings") or [],
+            )
+
+        school = school_result["data"]["selected_school"]
         major = None
         major_result: dict[str, Any] | None = None
         if major_text:
             major_result = self.major_lookup(major_text, limit=1)
             if major_result["status"] != "ok":
-                return major_result | {"tool_name": "specialty_group_lookup"}
+                normalized = {
+                    **school_result["normalized_slots"],
+                    **(major_result.get("normalized_slots") or {}),
+                    "province": province,
+                    "subject_type": subject_type,
+                    "year": year,
+                    "group_code": group_code,
+                }
+                source_tables = _merge_source_tables(
+                    school_result["source_tables"],
+                    major_result.get("source_tables") or [],
+                    ["edu_college_specialty_group", "edu_specialty_group_major"],
+                )
+                return tool_result(
+                    "specialty_group_lookup",
+                    major_result["status"],
+                    input_data,
+                    normalized_slots=normalized,
+                    data={
+                        "school": school,
+                        "major": {},
+                        "groups": [],
+                        "major_candidates": (major_result.get("data") or {}).get("candidates") or [],
+                    },
+                    data_gaps=["专业实体"],
+                    needs_clarification=major_result.get("needs_clarification") or [],
+                    source_tables=source_tables,
+                    warnings=major_result.get("warnings") or [],
+                )
             major = major_result["data"]["selected_major"]
 
-        school = school_result["data"]["selected_school"]
         rows = self.client.query(
             _specialty_group_lookup_sql(
                 school=school,
@@ -1589,10 +2326,10 @@ class RetrievalTools:
                 subject_type=subject_type,
                 year=year,
                 group_code=group_code,
-                limit=max(limit * 20, 100),
+                limit=safe_limit,
             )
         )
-        groups = _group_specialty_group_rows(rows, limit)
+        groups = _group_specialty_group_rows(rows, safe_limit)
         normalized = {
             **school_result["normalized_slots"],
             **(major_result["normalized_slots"] if major_result else {}),
@@ -1628,21 +2365,31 @@ class RetrievalTools:
 
         return tool_result(
             "specialty_group_lookup",
-            "ok",
-            {
-                "school_text": school_text,
-                "major_text": major_text,
-                "province": province,
-                "subject_type": subject_type,
-                "year": year,
-                "group_code": group_code,
-                "limit": limit,
-            },
+            "partial" if any(value in (None, "") for value in (province, subject_type, year)) else "ok",
+            input_data,
             normalized_slots=normalized,
             data={"school": school, "major": major or {}, "groups": groups},
             scope_notes=[
                 "专业组样本来自本地招生专业组表；专业组构成不等于入学后真实分流比例。",
                 "省份、科类、年份都会影响专业组，缺少这些条件时只能作为宽泛样本。",
+            ],
+            data_gaps=[
+                label
+                for slot, label in (
+                    (province, "招生省份"),
+                    (subject_type, "科类"),
+                    (year, "年份"),
+                )
+                if slot in (None, "")
+            ],
+            needs_clarification=[
+                name
+                for name, value in (
+                    ("province", province),
+                    ("subject_type", subject_type),
+                    ("year", year),
+                )
+                if value in (None, "")
             ],
             source_tables=source_tables,
         )
@@ -2554,63 +3301,564 @@ class RetrievalTools:
             warnings=[] if rows else ["本地库未命中该专业代码的考公岗位候选。"],
         )
 
+    def web_evidence_search(
+        self,
+        query: str,
+        search_scope: str | None = None,
+        domains: list[str] | None = None,
+        limit: int = 5,
+    ) -> dict[str, Any]:
+        """Search external web evidence through a configured free SearXNG endpoint."""
+
+        missing = _missing_slots({"query": query})
+        if missing:
+            return _needs("web_evidence_search", {"query": query, "search_scope": search_scope, "domains": domains, "limit": limit}, missing)
+        if not _is_positive_int(limit):
+            return tool_result(
+                "web_evidence_search",
+                "needs_clarification",
+                {"query": query, "search_scope": search_scope, "domains": domains, "limit": limit},
+                needs_clarification=["limit"],
+                warnings=["limit 必须是正整数。"],
+            )
+
+        config = _web_search_config()
+        config_missing = []
+        if not config["enabled"]:
+            config_missing.append("WEB_SEARCH_ENABLED")
+        if not config["base_url"]:
+            config_missing.append("SEARXNG_BASE_URL")
+        if config_missing:
+            return tool_result(
+                "web_evidence_search",
+                "needs_clarification",
+                {"query": query, "search_scope": search_scope, "domains": domains, "limit": limit},
+                normalized_slots={"provider": config["provider"]},
+                needs_clarification=config_missing,
+                scope_notes=["网页搜索默认关闭；需要显式配置免费 SearXNG 服务后才能调用外部网络。"],
+                warnings=["SearXNG web search is not enabled or SEARXNG_BASE_URL is not configured."],
+            )
+        if config["provider"] != "searxng":
+            return tool_result(
+                "web_evidence_search",
+                "needs_clarification",
+                {"query": query, "search_scope": search_scope, "domains": domains, "limit": limit},
+                normalized_slots={"provider": config["provider"]},
+                needs_clarification=["WEB_SEARCH_PROVIDER"],
+                warnings=[f"unsupported web search provider: {config['provider']}"],
+            )
+
+        safe_limit = min(int(limit), 20)
+        safe_domains = _normalize_web_domains(domains)
+        search_url = _build_searxng_search_url(
+            config["base_url"],
+            query,
+            safe_limit,
+            search_scope=search_scope,
+            domains=safe_domains,
+        )
+        try:
+            raw_payload = self.web_search_fetcher(search_url, config["timeout_seconds"])
+            payload = _decode_web_search_payload(raw_payload)
+        except Exception as exc:
+            return tool_result(
+                "web_evidence_search",
+                "error",
+                {"query": query, "search_scope": search_scope, "domains": domains, "limit": limit},
+                normalized_slots={"provider": config["provider"], "limit": safe_limit, "domains": safe_domains},
+                warnings=[f"{type(exc).__name__}: {exc}"],
+                scope_notes=["外部网页搜索失败时不能把结果猜成事实。"],
+            )
+
+        results = _normalize_searxng_results(payload, limit=safe_limit)
+        status = "ok" if results else "not_found"
+        return tool_result(
+            "web_evidence_search",
+            status,
+            {"query": query, "search_scope": search_scope, "domains": domains, "limit": limit},
+            normalized_slots={
+                "provider": config["provider"],
+                "query": query,
+                "search_scope": _optional_text(search_scope),
+                "domains": safe_domains,
+                "limit": safe_limit,
+            },
+            data={"query": query, "results": results},
+            scope_notes=[
+                "网页搜索结果是外部候选证据，回答时必须展示来源 URL。",
+                "优先采用学校官网、招生办、省考试院、阳光高考等官方来源；第三方来源只能作为线索。",
+            ],
+            data_gaps=[] if results else ["external_web_evidence"],
+            source_tables=[],
+            warnings=[] if results else ["SearXNG 未返回可用网页结果。"],
+        )
+
+    def web_evidence_fetch(
+        self,
+        query: str,
+        search_scope: str | None = None,
+        domains: list[str] | None = None,
+        limit: int = 5,
+        fetch_limit: int = 3,
+        evidence_limit: int = 5,
+        source_policy: str = "official_only",
+        max_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        """Search web evidence, fetch candidate pages, and extract citeable snippets."""
+
+        input_data = {
+            "query": query,
+            "search_scope": search_scope,
+            "domains": domains,
+            "limit": limit,
+            "fetch_limit": fetch_limit,
+            "evidence_limit": evidence_limit,
+            "source_policy": source_policy,
+            "max_seconds": max_seconds,
+        }
+        missing = _missing_slots({"query": query})
+        if missing:
+            return _needs("web_evidence_fetch", input_data, missing)
+        invalid_numeric_slot = _first_invalid_positive_int(
+            {"limit": limit, "fetch_limit": fetch_limit, "evidence_limit": evidence_limit}
+        )
+        if invalid_numeric_slot:
+            return tool_result(
+                "web_evidence_fetch",
+                "needs_clarification",
+                input_data,
+                needs_clarification=[invalid_numeric_slot],
+                warnings=[f"{invalid_numeric_slot} 必须是正整数。"],
+            )
+
+        safe_max_seconds = _web_gap_fill_max_seconds(max_seconds)
+        if safe_max_seconds is None:
+            return tool_result(
+                "web_gap_fill",
+                "needs_clarification",
+                input_data,
+                needs_clarification=["max_seconds"],
+                warnings=["max_seconds must be a positive number."],
+            )
+        normalized_source_policy = _normalize_web_source_policy(source_policy)
+        if not normalized_source_policy:
+            return tool_result(
+                "web_evidence_fetch",
+                "needs_clarification",
+                input_data,
+                needs_clarification=["source_policy"],
+                warnings=["source_policy 只支持 official_only、trusted_first、official_first 或 any。"],
+            )
+
+        search_result = self.web_evidence_search(query, search_scope, domains, limit)
+        safe_limit = min(int(limit), 20)
+        safe_fetch_limit = min(int(fetch_limit), 10)
+        safe_evidence_limit = min(int(evidence_limit), 10)
+        safe_domains = _normalize_web_domains(domains)
+        normalized_slots = {
+            "provider": "searxng",
+            "query": query,
+            "search_scope": _optional_text(search_scope),
+            "domains": safe_domains,
+            "limit": safe_limit,
+            "fetch_limit": safe_fetch_limit,
+            "evidence_limit": safe_evidence_limit,
+            "source_policy": normalized_source_policy,
+        }
+
+        search_results = []
+        if isinstance(search_result.get("data"), dict):
+            search_results = search_result["data"].get("results") or []
+        if search_result.get("status") != "ok":
+            return tool_result(
+                "web_evidence_fetch",
+                search_result.get("status") or "error",
+                input_data,
+                normalized_slots=normalized_slots,
+                data={"query": query, "search_results": search_results, "pages": []},
+                scope_notes=[
+                    "严谨网页证据工具必须先获得搜索候选页，再抓取正文并抽取证据片段。",
+                    "只返回搜索摘要时不能当作已核验事实。",
+                ],
+                data_gaps=search_result.get("data_gaps") or ["external_web_evidence"],
+                source_tables=[],
+                warnings=search_result.get("warnings") or [],
+                needs_clarification=search_result.get("needs_clarification") or [],
+            )
+
+        candidates = _select_web_fetch_candidates(search_results, normalized_source_policy, safe_fetch_limit)
+        rejected_results = _rejected_web_fetch_results(search_results, candidates)
+        if not candidates:
+            return tool_result(
+                "web_evidence_fetch",
+                "not_found",
+                input_data,
+                normalized_slots=normalized_slots,
+                data={
+                    "query": query,
+                    "search_results": [],
+                    "rejected_search_results": rejected_results,
+                    "pages": [],
+                },
+                scope_notes=[
+                    "严谨网页证据工具默认只采纳学校官网、省考试院、阳光高考等高可信来源。",
+                    "第三方来源只能作为线索，不能当作官方事实。",
+                ],
+                data_gaps=["official_web_evidence"],
+                source_tables=[],
+                warnings=[f"未找到符合 source_policy={normalized_source_policy} 的可抓取候选页面。"],
+            )
+
+        config = _web_search_config()
+        pages = [
+            _fetch_web_evidence_page(
+                result,
+                query=query,
+                fetcher=self.web_search_fetcher,
+                timeout=config["timeout_seconds"],
+                evidence_limit=safe_evidence_limit,
+            )
+            for result in candidates
+        ]
+        evidence_pages = [
+            page
+            for page in pages
+            if page.get("fetch_status") == "ok" and page.get("evidence_snippets")
+        ]
+        warnings = _web_fetch_warnings(pages)
+        if evidence_pages:
+            status = "ok"
+            data_gaps: list[str] = []
+        elif any(page.get("fetch_status") == "error" for page in pages):
+            status = "partial"
+            data_gaps = ["web_page_content"]
+        else:
+            status = "partial"
+            data_gaps = ["page_evidence_snippets"]
+
+        return tool_result(
+            "web_evidence_fetch",
+            status,
+            input_data,
+            normalized_slots=normalized_slots,
+            data={
+                "query": query,
+                "search_results": candidates,
+                "rejected_search_results": rejected_results,
+                "pages": pages,
+                "evidence_pages": evidence_pages,
+            },
+            scope_notes=[
+                "已对搜索候选页进行网页正文抓取；回答时必须引用 page.url 和 pages.evidence_snippets。",
+                "第三方来源只能作为线索，不能当作官方事实。",
+                "search_results 只能作为候选，不能当作已核验事实；高风险事实必须由正文片段直接支撑。",
+            ],
+            data_gaps=data_gaps,
+            source_tables=[],
+            warnings=warnings,
+        )
+
+    def web_gap_fill(
+        self,
+        gap_items: list[dict[str, Any]],
+        question: str | None = None,
+        max_rounds: int = 3,
+        max_fetches_per_round: int = 5,
+        source_policy: str = "official_only",
+        max_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        """Fill structured retrieval gaps through bounded official web evidence."""
+
+        input_data = {
+            "gap_items": gap_items,
+            "question": question,
+            "max_rounds": max_rounds,
+            "max_fetches_per_round": max_fetches_per_round,
+            "source_policy": source_policy,
+            "max_seconds": max_seconds,
+        }
+        if not isinstance(gap_items, list) or not gap_items:
+            return tool_result(
+                "web_gap_fill",
+                "needs_clarification",
+                input_data,
+                needs_clarification=["gap_items"],
+                warnings=["gap_items 必须是非空数组。"],
+            )
+        invalid_numeric_slot = _first_invalid_positive_int(
+            {"max_rounds": max_rounds, "max_fetches_per_round": max_fetches_per_round}
+        )
+        if invalid_numeric_slot:
+            return tool_result(
+                "web_gap_fill",
+                "needs_clarification",
+                input_data,
+                needs_clarification=[invalid_numeric_slot],
+                warnings=[f"{invalid_numeric_slot} 必须是正整数。"],
+            )
+        safe_max_seconds = _web_gap_fill_max_seconds(max_seconds)
+        if safe_max_seconds is None:
+            return tool_result(
+                "web_gap_fill",
+                "needs_clarification",
+                input_data,
+                needs_clarification=["max_seconds"],
+                warnings=["max_seconds must be a positive number."],
+            )
+        normalized_source_policy = _normalize_web_source_policy(source_policy)
+        if not normalized_source_policy:
+            return tool_result(
+                "web_gap_fill",
+                "needs_clarification",
+                input_data,
+                needs_clarification=["source_policy"],
+                warnings=["source_policy 只支持 official_only、trusted_first、official_first 或 any。"],
+            )
+
+        safe_max_rounds = min(int(max_rounds), 5)
+        safe_fetches_per_round = min(int(max_fetches_per_round), 10)
+        start_time = time.monotonic()
+        stop_reason = "completed"
+        judge = self.web_evidence_judge or _env_web_evidence_judge()
+        valid_gaps: list[dict[str, Any]] = []
+        unfilled_gaps: list[dict[str, Any]] = []
+        for raw_gap in gap_items:
+            if not isinstance(raw_gap, dict):
+                unfilled_gaps.append({"gap_key": "", "label": "非法缺口对象", "unfilled_reason": "invalid_gap_item"})
+                continue
+            gap_key = _optional_text(raw_gap.get("gap_key")) or ""
+            definition = GAP_REGISTRY.get(gap_key)
+            if not definition:
+                unfilled_gaps.append(raw_gap | {"unfilled_reason": "unknown_gap_key"})
+                continue
+            gap = _normalize_gap_item(raw_gap, definition)
+            if not gap.get("resolvable_by_web"):
+                unfilled_gaps.append(
+                    gap
+                    | {
+                        "unfilled_reason": "not_resolvable_by_web",
+                        "non_resolvable_reason": gap.get("non_resolvable_reason")
+                        or definition.get("non_resolvable_reason")
+                        or "该缺口不适合通过网页自动补全。",
+                    }
+                )
+                continue
+            valid_gaps.append(gap)
+
+        if not valid_gaps:
+            return tool_result(
+                "web_gap_fill",
+                "needs_clarification" if any(gap.get("unfilled_reason") == "unknown_gap_key" for gap in unfilled_gaps) else "not_found",
+                input_data,
+                normalized_slots={
+                    "max_rounds": safe_max_rounds,
+                    "max_fetches_per_round": safe_fetches_per_round,
+                    "source_policy": normalized_source_policy,
+                    "max_seconds": safe_max_seconds,
+                    "evidence_judge": "llm" if judge else "deterministic",
+                },
+                data={
+                    "filled_items": [],
+                    "accepted_evidence": [],
+                    "rejected_evidence": [],
+                    "unfilled_gaps": unfilled_gaps,
+                    "rounds": [],
+                    "stop_reason": "no_valid_gaps",
+                },
+                data_gaps=[gap.get("label") or gap.get("gap_key") for gap in unfilled_gaps],
+                warnings=["没有可通过网页自动补全的缺口。"],
+            )
+
+        unresolved: dict[str, dict[str, Any]] = {_gap_identity(gap): gap for gap in valid_gaps}
+        filled_items: list[dict[str, Any]] = []
+        accepted_evidence: list[dict[str, Any]] = []
+        rejected_evidence: list[dict[str, Any]] = []
+        rounds: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
+        seen_filled: set[tuple[str, str, str]] = set()
+        school_candidates: list[str] = []
+
+        for round_index in range(safe_max_rounds):
+            if not unresolved:
+                stop_reason = "all_gaps_filled"
+                break
+            if _web_gap_fill_timed_out(start_time, safe_max_seconds):
+                stop_reason = "timeout_reached"
+                break
+            round_trace: dict[str, Any] = {
+                "round_index": round_index,
+                "queries": [],
+                "accepted_count": 0,
+                "rejected_count": 0,
+            }
+            remaining_fetches = safe_fetches_per_round
+            for gap_identity, gap in list(unresolved.items()):
+                if _web_gap_fill_timed_out(start_time, safe_max_seconds):
+                    stop_reason = "timeout_reached"
+                    break
+                queries = _plan_web_gap_queries(
+                    gap,
+                    round_index=round_index,
+                    question=question,
+                    school_candidates=school_candidates,
+                )
+                for query in queries:
+                    if _web_gap_fill_timed_out(start_time, safe_max_seconds):
+                        stop_reason = "timeout_reached"
+                        break
+                    if remaining_fetches <= 0:
+                        break
+                    fetch_result = self.web_evidence_fetch(
+                        query,
+                        search_scope="official",
+                        domains=None,
+                        limit=remaining_fetches,
+                        fetch_limit=remaining_fetches,
+                        evidence_limit=5,
+                        source_policy=normalized_source_policy,
+                    )
+                    pages = []
+                    rejected_search_results = []
+                    if isinstance(fetch_result.get("data"), dict):
+                        pages = fetch_result["data"].get("pages") or []
+                        rejected_search_results = fetch_result["data"].get("rejected_search_results") or []
+                    round_trace["queries"].append(
+                        {
+                            "query": query,
+                            "status": fetch_result.get("status"),
+                            "fetched_pages": len(pages),
+                            "rejected_search_results": len(rejected_search_results),
+                            "warnings": fetch_result.get("warnings") or [],
+                        }
+                    )
+                    school_candidates = _dedupe_texts(
+                        [*school_candidates, *_extract_school_candidates_from_web_fetch(fetch_result)]
+                    )
+                    for rejected in rejected_search_results:
+                        rejected_evidence.append(
+                            {
+                                "gap_key": gap.get("gap_key"),
+                                "label": gap.get("label"),
+                                "source_url": rejected.get("url"),
+                                "source_type": rejected.get("source_type"),
+                                "rejection_reason": "source_policy_rejected",
+                                "title": rejected.get("title"),
+                            }
+                        )
+                        round_trace["rejected_count"] += 1
+                    for page in pages:
+                        url = _optional_text(page.get("url")) or ""
+                        if url and url in seen_urls:
+                            continue
+                        if url:
+                            seen_urls.add(url)
+                        evaluation = _evaluate_web_gap_evidence(gap, page, normalized_source_policy, judge=judge)
+                        if evaluation.get("accepted"):
+                            evidence = {key: value for key, value in evaluation.items() if key != "accepted"}
+                            dedupe_key = (
+                                _optional_text(evidence.get("school_name")) or "",
+                                _optional_text(evidence.get("major_name")) or "",
+                                _optional_text(evidence.get("source_url")) or "",
+                            )
+                            if dedupe_key in seen_filled:
+                                continue
+                            seen_filled.add(dedupe_key)
+                            accepted_evidence.append(evidence)
+                            filled_items.append(_filled_item_from_evidence(evidence))
+                            round_trace["accepted_count"] += 1
+                        else:
+                            rejected_evidence.append(evaluation)
+                            round_trace["rejected_count"] += 1
+                    remaining_fetches -= max(len(pages), 1)
+                    if any(evidence.get("gap_key") == gap.get("gap_key") for evidence in accepted_evidence):
+                        if _gap_requires_list_coverage(gap):
+                            continue
+                        unresolved.pop(gap_identity, None)
+                        break
+                if remaining_fetches <= 0:
+                    break
+            if round_trace["queries"] or round_trace["accepted_count"] or round_trace["rejected_count"]:
+                rounds.append(round_trace)
+            if stop_reason == "timeout_reached":
+                break
+            if round_trace["accepted_count"] == 0 and not school_candidates and round_index >= 1:
+                stop_reason = "no_new_candidates"
+                break
+
+        if stop_reason == "completed":
+            if not unresolved:
+                stop_reason = "all_gaps_filled"
+            elif rounds and all(round_info.get("accepted_count") == 0 for round_info in rounds):
+                stop_reason = "no_accepted_evidence"
+            else:
+                stop_reason = "max_rounds_reached"
+
+        unfilled_gaps.extend(
+            gap
+            | {
+                "unfilled_reason": _web_gap_unfilled_reason(
+                    gap,
+                    stop_reason=stop_reason,
+                    accepted_evidence=accepted_evidence,
+                )
+            }
+            for gap in unresolved.values()
+        )
+        coverage_summary = _web_gap_coverage_summary(
+            valid_gaps,
+            accepted_evidence=accepted_evidence,
+            rejected_evidence=rejected_evidence,
+            school_candidates=school_candidates,
+            unresolved=unresolved,
+        )
+        if accepted_evidence and not unfilled_gaps:
+            status = "ok"
+        elif accepted_evidence:
+            status = "partial"
+        else:
+            status = "not_found"
+
+        return tool_result(
+            "web_gap_fill",
+            status,
+            input_data,
+            normalized_slots={
+                "max_rounds": safe_max_rounds,
+                "max_fetches_per_round": safe_fetches_per_round,
+                "source_policy": normalized_source_policy,
+                "question": _optional_text(question),
+                "max_seconds": safe_max_seconds,
+                "evidence_judge": "llm" if judge else "deterministic",
+            },
+            data={
+                "filled_items": filled_items,
+                "accepted_evidence": accepted_evidence,
+                "rejected_evidence": rejected_evidence,
+                "unfilled_gaps": unfilled_gaps,
+                "rounds": rounds,
+                "stop_reason": stop_reason,
+                "coverage_status": coverage_summary.get("coverage_status"),
+                "coverage_summary": coverage_summary,
+            },
+            scope_notes=[
+                "网页缺口补全只接受抓取正文后通过证据评估的页面。",
+                "rejected_evidence 和 rejected_search_results 只能作为线索，不能写成事实。",
+            ],
+            data_gaps=[gap.get("label") or gap.get("gap_key") for gap in unfilled_gaps],
+            source_tables=[],
+            warnings=[] if accepted_evidence else ["未能通过可信网页正文证据补全缺口。"],
+        )
+
     def data_gap_detection(
         self,
         question_type: str,
         available_fields: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Return missing data items for one question type."""
+        """Return structured missing data items for one question type."""
 
-        available = set(available_fields or [])
-        missing_by_type = {
-            "school_major_profile": {
-                "school_basic": "学校基础信息",
-                "major_basic": "专业基础信息",
-                "school_major": "学校-专业开设关系",
-                "subject_eval": "教育部学科评估",
-                "school_major_salary": "校专业级薪资分布",
-                "school_major_regions": "校专业级工作地域分布",
-                "top_companies": "校专业级Top对口公司",
-                "civil_service_mapping": "考公岗位映射",
-                "transfer_policy": "转专业政策",
-                "streaming_ratio": "专业组真实分流比例/冷门专业比例",
-                "official_major_intro": "学校官网专业介绍证据链",
-            },
-            "major_market_reference": {
-                "market_snapshot": "专业市场观察数据",
-                "job_samples": "招聘岗位样本",
-                "official_employment": "官方就业质量报告佐证",
-            },
-            "civil_service_role_search": {
-                "role_candidates": "考公岗位候选",
-                "official_role_table": "官方招录岗位表来源",
-                "manual_mapping": "专业代码人工确认映射",
-            },
-            "comparison_query": {
-                "target_profiles": "对比对象画像",
-                "admission_context": "录取历史上下文",
-                "employment_context": "就业/升学对比口径",
-                "decision_preferences": "考生偏好权重",
-            },
-            "major_streaming_policy_lookup": {
-                "official_streaming_policy": "官方大类分流政策",
-                "streaming_ratio": "真实分流比例",
-                "unpopular_major_ratio": "分流到冷门专业比例",
-            },
-            "civil_service_mapping": {
-                "official_role_table": "官方岗位表来源",
-                "eligibility_rules": "正式可报条件判定",
-                "manual_major_mapping": "专业代码人工确认映射",
-            },
-            "policy_rule_lookup": {
-                "official_admission_rule": "官方招生章程原文",
-                "single_subject_limit": "单科成绩限制",
-                "physical_exam_limit": "身体条件限制",
-                "language_limit": "外语语种限制",
-            },
-        }
-        if question_type not in missing_by_type:
-            supported_types = sorted(missing_by_type)
+        available = set(_distinct_texts(available_fields or []))
+        supported_types = _supported_gap_question_types()
+        if question_type not in supported_types:
             return tool_result(
                 "data_gap_detection",
                 "needs_clarification",
@@ -2622,17 +3870,1219 @@ class RetrievalTools:
                 source_tables=[],
             )
 
-        expected = missing_by_type.get(question_type, {})
-        missing_items = [label for key, label in expected.items() if key not in available]
+        gap_items = _gap_items_for_question_type(question_type, available)
+        missing_items = [str(item.get("label") or item.get("gap_key")) for item in gap_items]
+        status = "partial" if gap_items else "ok"
 
         return tool_result(
             "data_gap_detection",
-            "ok",
+            status,
             {"question_type": question_type, "available_fields": available_fields or []},
-            data={"missing_items": missing_items},
+            data={
+                "question_type": question_type,
+                "available_fields": sorted(available),
+                "missing_items": missing_items,
+                "gap_items": gap_items,
+            },
             scope_notes=["缺口检测只描述本地当前缺失，不代表事实不存在。"],
+            data_gaps=missing_items,
             source_tables=[],
         )
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _web_gap_fill_max_seconds(value: float | None) -> float | None:
+    if value is None:
+        return min(_env_float("WEB_GAP_FILL_MAX_SECONDS", 45.0), 300.0)
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed <= 0:
+        return None
+    return min(parsed, 300.0)
+
+
+def _web_gap_fill_timed_out(start_time: float, max_seconds: float) -> bool:
+    return time.monotonic() - start_time >= max_seconds
+
+
+def _web_gap_judge_body_text(text: str) -> str:
+    max_chars = int(min(max(_env_float("WEB_GAP_JUDGE_BODY_CHARS", 6000.0), 1000.0), 20000.0))
+    return _text(text)[:max_chars]
+
+
+def _env_web_evidence_judge() -> Callable[[dict[str, Any]], dict[str, Any]] | None:
+    if not _env_flag("WEB_GAP_JUDGE_ENABLED", default=False):
+        return None
+
+    api_key = (
+        os.environ.get("WEB_GAP_JUDGE_API_KEY", "").strip()
+        or os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        or os.environ.get("OPENAI_API_KEY", "").strip()
+    )
+    base_url = (
+        os.environ.get("WEB_GAP_JUDGE_BASE_URL", "").strip()
+        or os.environ.get("DEEPSEEK_BASE_URL", "").strip()
+        or "https://api.deepseek.com"
+    )
+    model = (
+        os.environ.get("WEB_GAP_JUDGE_MODEL", "").strip()
+        or os.environ.get("DEEPSEEK_MODEL", "").strip()
+        or "deepseek-v4-pro"
+    )
+    timeout = _env_float("WEB_GAP_JUDGE_TIMEOUT_SECONDS", 20.0)
+    max_tokens = int(min(max(_env_float("WEB_GAP_JUDGE_MAX_TOKENS", 1500.0), 100.0), 4000.0))
+
+    def judge(context: dict[str, Any]) -> dict[str, Any]:
+        if not api_key or api_key in {"your_deepseek_api_key_here", "填入你的 DeepSeek API Key"}:
+            raise RuntimeError("WEB_GAP_JUDGE_ENABLED=true but no valid judge API key is configured.")
+        return _call_openai_compatible_web_evidence_judge(
+            context,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            timeout=timeout,
+            max_tokens=max_tokens,
+        )
+
+    return judge
+
+
+def _call_openai_compatible_web_evidence_judge(
+    context: dict[str, Any],
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+    timeout: float,
+    max_tokens: int,
+) -> dict[str, Any]:
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a strict evidence judge. Decide only whether the provided page body text "
+                    "fills the structured data gap. Do not use outside knowledge. Search result titles "
+                    "and snippets are not evidence. Return only a JSON object with keys: supports_gap, "
+                    "confidence, filled_fields, evidence_quote, reason, missing_requirements, next_action. "
+                    "If supports_gap is true, evidence_quote must be copied verbatim from body_text. "
+                    "Use a short reason under 120 characters and at most 3 missing_requirements. "
+                    "Return minified valid JSON only. Do not wrap it in markdown. Do not include comments."
+                ),
+            },
+            {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
+        ],
+        "temperature": 0,
+        "max_tokens": max_tokens,
+        "response_format": {"type": "json_object"},
+        "thinking": {"type": "disabled"},
+    }
+    request = Request(
+        _openai_compatible_chat_url(base_url),
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "major-intel-web-gap-judge/1.0",
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=timeout) as response:
+        response_payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    choices = response_payload.get("choices") if isinstance(response_payload, dict) else None
+    first_choice = choices[0] if isinstance(choices, list) and choices else {}
+    message = first_choice.get("message") if isinstance(first_choice, dict) else {}
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str):
+        raise ValueError("judge response missing choices[0].message.content")
+    try:
+        parsed = _json_object_from_text(content)
+    except Exception as exc:
+        raise ValueError(f"judge response content is not valid JSON: {content[:500]!r}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("judge response content is not a JSON object")
+    return parsed
+
+
+def _openai_compatible_chat_url(base_url: str) -> str:
+    cleaned = _text(base_url).rstrip("/")
+    if cleaned.endswith("/chat/completions"):
+        return cleaned
+    return f"{cleaned}/chat/completions"
+
+
+def _json_object_from_text(text: str) -> dict[str, Any]:
+    cleaned = _text(text).strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    try:
+        value = json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+        if not match:
+            raise
+        value = json.loads(match.group(0))
+    if not isinstance(value, dict):
+        raise ValueError("expected JSON object")
+    return value
+
+
+def _web_search_config() -> dict[str, Any]:
+    return {
+        "enabled": _env_flag("WEB_SEARCH_ENABLED", default=False),
+        "provider": os.environ.get("WEB_SEARCH_PROVIDER", "searxng").strip().lower() or "searxng",
+        "base_url": os.environ.get("SEARXNG_BASE_URL", "").strip().rstrip("/"),
+        "timeout_seconds": _env_float("WEB_SEARCH_TIMEOUT_SECONDS", 10.0),
+    }
+
+
+def _normalize_web_domains(domains: list[str] | None) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in domains or []:
+        text = _text(value).lower()
+        if not text:
+            continue
+        parsed = urlparse(text if "://" in text else f"https://{text}")
+        host = (parsed.netloc or parsed.path).split("/", 1)[0].strip().lstrip(".")
+        if host and host not in seen:
+            seen.add(host)
+            normalized.append(host)
+    return normalized
+
+
+def _build_searxng_search_url(
+    base_url: str,
+    query: str,
+    limit: int,
+    *,
+    search_scope: str | None,
+    domains: list[str],
+) -> str:
+    scoped_query = _web_search_scoped_query(query, search_scope=search_scope, domains=domains)
+    return f"{base_url.rstrip('/')}/search?" + urlencode(
+        {
+            "q": scoped_query,
+            "format": "json",
+            "language": "zh-CN",
+            "safesearch": "0",
+            "pageno": "1",
+            "count": str(max(limit, 1)),
+        }
+    )
+
+
+def _web_search_scoped_query(query: str, *, search_scope: str | None, domains: list[str]) -> str:
+    parts = [_text(query)]
+    for domain in domains:
+        parts.append(f"site:{domain}")
+    scope = _text(search_scope).lower()
+    if scope in {"official", "admission", "policy"} and not domains:
+        parts.extend(["官网", "招生"])
+    return " ".join(part for part in parts if part)
+
+
+def _fetch_url_bytes(url: str, timeout: float) -> bytes:
+    request = Request(url, headers={"User-Agent": "major-intel-web-evidence-search/1.0"})
+    with urlopen(request, timeout=timeout) as response:
+        return response.read()
+
+
+def _decode_web_search_payload(raw_payload: bytes | str) -> dict[str, Any]:
+    if isinstance(raw_payload, bytes):
+        text = raw_payload.decode("utf-8", errors="replace")
+    else:
+        text = str(raw_payload)
+    payload = json.loads(text)
+    if not isinstance(payload, dict):
+        raise ValueError("SearXNG response must be a JSON object.")
+    return payload
+
+
+def _normalize_searxng_results(payload: dict[str, Any], *, limit: int) -> list[dict[str, Any]]:
+    raw_results = payload.get("results")
+    if not isinstance(raw_results, list):
+        return []
+    results: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_results[:limit], start=1):
+        if not isinstance(item, dict):
+            continue
+        url = _optional_text(item.get("url") or item.get("link"))
+        title = _optional_text(item.get("title"))
+        if not url or not title:
+            continue
+        snippet = _optional_text(item.get("content") or item.get("snippet"))
+        source_type = _web_source_type(url)
+        score = _web_result_score(item.get("score"))
+        results.append(
+            {
+                "rank": index,
+                "title": title,
+                "url": url,
+                "snippet": snippet,
+                "source_type": source_type,
+                "confidence": _web_result_confidence(source_type, score),
+                "score": score,
+                "category": _optional_text(item.get("category") or item.get("engine")),
+            }
+        )
+    return results
+
+
+def _first_invalid_positive_int(values: dict[str, Any]) -> str | None:
+    for name, value in values.items():
+        if not _is_positive_int(value):
+            return name
+    return None
+
+
+def _normalize_web_source_policy(source_policy: str | None) -> str | None:
+    policy = _text(source_policy or "official_only").lower()
+    if policy == "trusted_first":
+        return "official_first"
+    if policy in {"official_only", "official_first", "any"}:
+        return policy
+    return None
+
+
+def _select_web_fetch_candidates(
+    results: list[dict[str, Any]],
+    source_policy: str,
+    fetch_limit: int,
+) -> list[dict[str, Any]]:
+    trusted = [result for result in results if _web_source_type_is_trusted(result.get("source_type"))]
+    if source_policy == "official_only":
+        return trusted[:fetch_limit]
+    if source_policy == "official_first":
+        return _dedupe_web_results([*trusted, *results])[:fetch_limit]
+    return _dedupe_web_results(results)[:fetch_limit]
+
+
+def _dedupe_web_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for result in results:
+        url = _optional_text(result.get("url"))
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        deduped.append(result)
+    return deduped
+
+
+def _rejected_web_fetch_results(
+    results: list[dict[str, Any]],
+    accepted_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    accepted_urls = {_optional_text(result.get("url")) for result in accepted_results}
+    rejected = []
+    for result in results:
+        url = _optional_text(result.get("url"))
+        if not url or url in accepted_urls:
+            continue
+        rejected.append(
+            {
+                "title": result.get("title"),
+                "url": url,
+                "source_type": result.get("source_type"),
+                "confidence": result.get("confidence"),
+                "rejection_reason": "not_selected_by_source_policy",
+            }
+        )
+    return rejected
+
+
+def _web_source_type_is_trusted(source_type: Any) -> bool:
+    return str(source_type or "") in {"official", "exam_authority", "chsi"}
+
+
+def _fetch_web_evidence_page(
+    result: dict[str, Any],
+    *,
+    query: str,
+    fetcher: Callable[[str, float], bytes | str],
+    timeout: float,
+    evidence_limit: int,
+) -> dict[str, Any]:
+    base_page = {
+        "rank": result.get("rank"),
+        "title": result.get("title"),
+        "url": result.get("url"),
+        "source_type": result.get("source_type"),
+        "confidence": result.get("confidence"),
+        "search_snippet": result.get("snippet"),
+    }
+    url = _optional_text(result.get("url"))
+    if not url:
+        return base_page | {
+            "fetch_status": "error",
+            "content_type": None,
+            "content_length": 0,
+            "text_excerpt": "",
+            "body_text": "",
+            "evidence_snippets": [],
+            "warnings": ["missing URL for web evidence candidate."],
+        }
+
+    try:
+        raw_page = fetcher(url, timeout)
+        content_type, text = _extract_web_page_text(url, raw_page)
+    except Exception as exc:
+        return base_page | {
+            "fetch_status": "error",
+            "content_type": None,
+            "content_length": 0,
+            "text_excerpt": "",
+            "body_text": "",
+            "evidence_snippets": [],
+            "warnings": [f"{type(exc).__name__}: {exc}"],
+        }
+
+    if not text:
+        return base_page | {
+            "fetch_status": "no_text",
+            "content_type": content_type,
+            "content_length": 0,
+            "text_excerpt": "",
+            "body_text": "",
+            "evidence_snippets": [],
+            "warnings": ["页面已获取，但未能抽取可用正文文本。"],
+        }
+
+    snippets = _web_evidence_snippets(text, query=query, limit=evidence_limit)
+    return base_page | {
+        "fetch_status": "ok" if snippets else "no_evidence",
+        "content_type": content_type,
+        "content_length": len(text),
+        "text_excerpt": text[:1200],
+        "body_text": _web_gap_judge_body_text(text),
+        "evidence_snippets": snippets,
+        "warnings": [] if snippets else ["页面已获取，但正文没有命中查询关键词。"],
+    }
+
+
+def _extract_web_page_text(url: str, raw_page: bytes | str) -> tuple[str, str]:
+    if isinstance(raw_page, bytes):
+        if raw_page.lstrip().startswith(b"%PDF") or urlparse(url).path.lower().endswith(".pdf"):
+            return "pdf", _extract_pdf_text(raw_page)
+        html_text = _decode_web_page_bytes(raw_page)
+    else:
+        html_text = str(raw_page)
+
+    if _looks_like_html(html_text):
+        return "html", _extract_html_text(html_text)
+    return "text", _normalize_page_text(html_text)
+
+
+def _decode_web_page_bytes(raw_page: bytes) -> str:
+    for encoding in ("utf-8", "gb18030", "gbk"):
+        try:
+            return raw_page.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw_page.decode("utf-8", errors="replace")
+
+
+def _looks_like_html(text: str) -> bool:
+    sample = text[:500].lower()
+    return "<html" in sample or "<body" in sample or "</" in sample
+
+
+def _extract_html_text(html_text: str) -> str:
+    try:
+        from bs4 import BeautifulSoup
+    except Exception:
+        text = re.sub(r"(?is)<(script|style|noscript|svg).*?</\1>", " ", html_text)
+        text = re.sub(r"(?s)<[^>]+>", " ", text)
+        return _normalize_page_text(text)
+
+    soup = BeautifulSoup(html_text, "html.parser")
+    for tag in soup(["script", "style", "noscript", "svg", "nav", "footer", "header", "form"]):
+        tag.decompose()
+    return _normalize_page_text(soup.get_text("\n", strip=True))
+
+
+def _extract_pdf_text(raw_page: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(raw_page))
+        return _normalize_page_text("\n".join(page.extract_text() or "" for page in reader.pages))
+    except Exception:
+        return ""
+
+
+def _normalize_page_text(text: str) -> str:
+    text = re.sub(r"[\u200b\xa0]+", " ", text)
+    lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
+def _web_evidence_snippets(text: str, *, query: str, limit: int) -> list[dict[str, Any]]:
+    keywords = _web_evidence_keywords(query)
+    if not keywords:
+        return []
+    scored: list[tuple[int, int, str, list[str]]] = []
+    for index, sentence in enumerate(_web_evidence_sentences(text)):
+        matched = [keyword for keyword in keywords if keyword.lower() in sentence.lower()]
+        if not matched:
+            continue
+        scored.append((len(matched), -index, _bounded_snippet(sentence), matched))
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    snippets = []
+    for score, _negative_index, sentence, matched in scored[:limit]:
+        snippets.append(
+            {
+                "text": sentence,
+                "matched_keywords": matched,
+                "score": score,
+            }
+        )
+    return snippets
+
+
+def _web_evidence_keywords(query: str) -> list[str]:
+    raw_parts = re.split(r"[\s,，。；;：:、/\\|()（）【】\[\]\"']+", _text(query))
+    keywords: list[str] = []
+    for part in raw_parts:
+        clean = part.strip()
+        if len(clean) < 2:
+            continue
+        keywords.append(clean)
+        if clean.endswith("专业") and len(clean) > 2:
+            keywords.append(clean[:-2])
+        for marker in ("本科", "专科", "招生", "章程", "校区", "学费", "选科"):
+            if marker in clean:
+                keywords.append(marker)
+    return _dedupe_texts(keywords)
+
+
+def _web_evidence_sentences(text: str) -> list[str]:
+    raw_sentences = re.split(r"(?<=[。！？!?；;])|\n+", text)
+    sentences = [_normalize_page_text(sentence) for sentence in raw_sentences]
+    return [sentence for sentence in sentences if len(sentence) >= 2]
+
+
+def _bounded_snippet(sentence: str, max_length: int = 280) -> str:
+    if len(sentence) <= max_length:
+        return sentence
+    return sentence[: max_length - 1].rstrip() + "…"
+
+
+def _dedupe_texts(values: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            deduped.append(value)
+    return deduped
+
+
+def _web_fetch_warnings(pages: list[dict[str, Any]]) -> list[str]:
+    warnings: list[str] = []
+    for page in pages:
+        for warning in page.get("warnings") or []:
+            url = page.get("url") or ""
+            warnings.append(f"{url}: {warning}" if url else str(warning))
+    return warnings
+
+
+def _web_result_score(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _web_source_type(url: str) -> str:
+    host = (urlparse(url).netloc or "").lower()
+    if "chsi.com.cn" in host or "chsi.cn" in host:
+        return "chsi"
+    if host.endswith(".edu.cn") or host.endswith(".edu") or ".edu.cn" in host:
+        return "official"
+    if host == "gov.cn" or host.endswith(".gov.cn"):
+        return "exam_authority"
+    if _web_host_has_exam_authority_marker(host):
+        return "exam_authority"
+    return "third_party"
+
+
+def _web_host_has_exam_authority_marker(host: str) -> bool:
+    labels = [label for label in host.split(".") if label]
+    return any(label in {"eea", "zsks", "zhaokao", "neea"} for label in labels)
+
+
+def _web_result_confidence(source_type: str, score: float | None) -> str:
+    if source_type in {"official", "exam_authority", "chsi"}:
+        return "high" if score is None or score >= 0.5 else "medium"
+    if score is not None and score >= 0.8:
+        return "medium"
+    return "low"
+
+
+def _normalize_gap_item(raw_gap: dict[str, Any], definition: dict[str, Any]) -> dict[str, Any]:
+    normalized_slots = raw_gap.get("normalized_slots") if isinstance(raw_gap.get("normalized_slots"), dict) else {}
+    return {
+        "gap_key": raw_gap.get("gap_key"),
+        "label": raw_gap.get("label") or definition.get("label") or raw_gap.get("gap_key"),
+        "question_type": raw_gap.get("question_type")
+        or (definition.get("question_types") or [""])[0],
+        "missing_fields": list(raw_gap.get("missing_fields") or definition.get("required_fields") or []),
+        "resolvable_by_web": bool(raw_gap.get("resolvable_by_web", definition.get("resolvable_by_web"))),
+        "preferred_source_types": list(raw_gap.get("preferred_source_types") or definition.get("preferred_source_types") or []),
+        "evidence_requirements": list(raw_gap.get("evidence_requirements") or definition.get("evidence_requirements") or []),
+        "normalized_slots": dict(normalized_slots),
+        **({"non_resolvable_reason": raw_gap.get("non_resolvable_reason") or definition.get("non_resolvable_reason")} if raw_gap.get("non_resolvable_reason") or definition.get("non_resolvable_reason") else {}),
+    }
+
+
+def _gap_identity(gap: dict[str, Any]) -> str:
+    payload = {
+        "gap_key": gap.get("gap_key"),
+        "question_type": gap.get("question_type"),
+        "normalized_slots": gap.get("normalized_slots") or {},
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+
+def _gap_requires_list_coverage(gap: dict[str, Any]) -> bool:
+    return (
+        _optional_text(gap.get("gap_key")) == "major_school_relation"
+        and _optional_text(gap.get("question_type")) == "major_school_list"
+    )
+
+
+def _web_gap_unfilled_reason(
+    gap: dict[str, Any],
+    *,
+    stop_reason: str,
+    accepted_evidence: list[dict[str, Any]],
+) -> str:
+    if stop_reason == "timeout_reached":
+        return "timeout_reached"
+    if _gap_requires_list_coverage(gap) and any(
+        evidence.get("gap_key") == gap.get("gap_key") for evidence in accepted_evidence
+    ):
+        return "list_coverage_incomplete"
+    return "no_accepted_official_evidence"
+
+
+def _web_gap_coverage_summary(
+    gaps: list[dict[str, Any]],
+    *,
+    accepted_evidence: list[dict[str, Any]],
+    rejected_evidence: list[dict[str, Any]],
+    school_candidates: list[str],
+    unresolved: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    list_gap_keys = {gap.get("gap_key") for gap in gaps if _gap_requires_list_coverage(gap)}
+    if not list_gap_keys:
+        return {
+            "coverage_status": "not_applicable",
+            "confirmed_schools": [],
+            "candidate_schools": [],
+            "unknown_schools": [],
+            "rejected_schools": [],
+        }
+
+    confirmed_schools = _dedupe_texts(
+        [
+            _optional_text(evidence.get("school_name")) or ""
+            for evidence in accepted_evidence
+            if evidence.get("gap_key") in list_gap_keys
+        ]
+    )
+    rejected_schools = _dedupe_texts(
+        [
+            _optional_text(evidence.get("school_name")) or ""
+            for evidence in rejected_evidence
+            if evidence.get("gap_key") in list_gap_keys
+        ]
+    )
+    candidate_schools = _dedupe_texts([*school_candidates, *confirmed_schools, *rejected_schools])
+    confirmed_set = set(confirmed_schools)
+    rejected_set = set(rejected_schools)
+    unknown_schools = [school for school in candidate_schools if school not in confirmed_set and school not in rejected_set]
+    list_unresolved = any(_gap_requires_list_coverage(gap) for gap in unresolved.values())
+    if list_unresolved and confirmed_schools:
+        coverage_status = "partial"
+    elif list_unresolved:
+        coverage_status = "insufficient"
+    else:
+        coverage_status = "complete"
+    return {
+        "coverage_status": coverage_status,
+        "confirmed_schools": confirmed_schools,
+        "candidate_schools": candidate_schools,
+        "unknown_schools": unknown_schools,
+        "rejected_schools": rejected_schools,
+    }
+
+
+def _plan_web_gap_queries(
+    gap: dict[str, Any],
+    *,
+    round_index: int,
+    question: str | None,
+    school_candidates: list[str],
+) -> list[str]:
+    gap_key = _optional_text(gap.get("gap_key")) or ""
+    slots = gap.get("normalized_slots") if isinstance(gap.get("normalized_slots"), dict) else {}
+    major_name = _slot_text(slots, "major_name", "selected_name", "major_text", "selected_special_name")
+    major_code = _slot_text(slots, "major_code", "selected_code", "selected_special_id", "special_id")
+    school_name = _slot_text(slots, "school_name", "selected_school_name", "selected_name", "school_text")
+    province = _slot_text(slots, "province_filter", "province")
+    school_level = _slot_text(slots, "school_level_filter", "school_level") or "本科"
+    year = _slot_text(slots, "year")
+
+    if gap_key == "major_school_relation":
+        if round_index == 0:
+            return _dedupe_texts(
+                [
+                    _join_query_parts([major_name, major_code, province, school_level, "开设 院校", "site:gaokao.chsi.com.cn"]),
+                    _join_query_parts([major_name, province, school_level, "招生专业", "site:edu.cn"]),
+                    _join_query_parts([province, major_name, school_level, "招生专业 学校"]),
+                    _optional_text(question) or "",
+                ]
+            )
+        if round_index == 1:
+            return _dedupe_texts(
+                [
+                    _join_query_parts([province, "高校", major_name, "专业 招生"]),
+                    _join_query_parts([province, school_level, major_name, "专业目录"]),
+                ]
+            )
+        return _dedupe_texts(
+            [
+                _join_query_parts([candidate, major_name, school_level, "招生专业"])
+                for candidate in school_candidates[:5]
+            ]
+            + [
+                _join_query_parts([candidate, major_code, "招生专业"])
+                for candidate in school_candidates[:5]
+                if major_code
+            ]
+        )
+
+    if gap_key == "school_major_catalog":
+        return _dedupe_texts(
+            [
+                _join_query_parts([school_name, "本科招生专业目录", "site:edu.cn"]),
+                _join_query_parts([school_name, major_name, "本科招生专业"]),
+                _join_query_parts([school_name, "招生专业", year]),
+                _optional_text(question) or "",
+            ]
+        )
+
+    if gap_key == "admission_history":
+        return _dedupe_texts(
+            [
+                _join_query_parts([school_name, major_name, province, year, "录取分数 位次", "site:gov.cn"]),
+                _join_query_parts([school_name, major_name, province, year, "录取分数", "site:edu.cn"]),
+                _join_query_parts([province, school_name, major_name, "录取分数"]),
+                _optional_text(question) or "",
+            ]
+        )
+
+    if gap_key in {"official_admission_rule", "single_subject_limit", "physical_exam_limit", "language_limit"}:
+        return _dedupe_texts(
+            [
+                _join_query_parts([school_name, year, "招生章程", "site:edu.cn"]),
+                _join_query_parts([school_name, gap.get("label"), "招生章程"]),
+                _optional_text(question) or "",
+            ]
+        )
+
+    return _dedupe_texts(
+        [
+            _join_query_parts([school_name, major_name, province, year, gap.get("label"), "官网"]),
+            _join_query_parts([school_name, major_name, gap.get("label"), "site:edu.cn"]),
+            _optional_text(question) or "",
+        ]
+    )
+
+
+def _slot_text(slots: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        text = _optional_text(slots.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _join_query_parts(parts: list[Any]) -> str:
+    return " ".join(_text(part) for part in parts if _text(part))
+
+
+def _extract_school_candidates_from_web_fetch(fetch_result: dict[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    data = fetch_result.get("data") if isinstance(fetch_result.get("data"), dict) else {}
+    for collection_name in ("search_results", "rejected_search_results", "pages", "evidence_pages"):
+        for item in data.get(collection_name) or []:
+            text = " ".join(
+                _text(item.get(key))
+                for key in ("title", "snippet", "search_snippet", "text_excerpt")
+                if isinstance(item, dict)
+            )
+            candidates.extend(_extract_school_names(text))
+    return _dedupe_texts(candidates)
+
+
+def _extract_school_names(text: str) -> list[str]:
+    names = re.findall(r"[\u4e00-\u9fff]{2,24}(?:大学|学院|职业技术大学|职业学院|高等专科学校)", _text(text))
+    cleaned = []
+    for name in names:
+        for prefix in ("首页", "关于", "欢迎访问"):
+            if name.startswith(prefix):
+                name = name[len(prefix) :]
+        if len(name) >= 4:
+            cleaned.append(name)
+    return _dedupe_texts(cleaned)
+
+
+def _evaluate_web_gap_evidence(
+    gap: dict[str, Any],
+    page: dict[str, Any],
+    source_policy: str,
+    *,
+    judge: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    gap_key = _optional_text(gap.get("gap_key")) or ""
+    source_type = _optional_text(page.get("source_type")) or _web_source_type(_optional_text(page.get("url")) or "")
+    base = {
+        "gap_key": gap_key,
+        "label": gap.get("label"),
+        "source_url": page.get("url"),
+        "source_type": source_type,
+        "title": page.get("title"),
+    }
+    if source_policy == "official_only" and not _web_source_type_is_trusted(source_type):
+        return base | {"accepted": False, "rejection_reason": "source_policy_rejected"}
+    if page.get("fetch_status") not in {"ok", "no_evidence"}:
+        return base | {"accepted": False, "rejection_reason": "fetch_failed"}
+
+    body_text = _page_body_text(page)
+    if judge:
+        if len(body_text) < 10:
+            return base | {"accepted": False, "rejection_reason": "content_too_short"}
+        return _evaluate_web_gap_evidence_with_judge(gap, page, base, body_text, judge)
+
+    text = _page_evidence_text(page)
+    if len(text) < 10:
+        return base | {"accepted": False, "rejection_reason": "content_too_short"}
+
+    slots = gap.get("normalized_slots") if isinstance(gap.get("normalized_slots"), dict) else {}
+    major_name = _slot_text(slots, "major_name", "selected_name", "major_text", "selected_special_name")
+    major_code = _slot_text(slots, "major_code", "selected_code", "selected_special_id", "special_id")
+    school_name = _slot_text(slots, "school_name", "selected_school_name", "school_text")
+    if not school_name:
+        school_name = _extract_school_name_from_page(page, text)
+
+    if gap_key in {"major_school_relation", "school_major_catalog", "school_major_relation", "official_major_intro"}:
+        if not _text_contains_any(text, [major_name, major_code]):
+            return base | {"accepted": False, "rejection_reason": "missing_major_name"}
+        if not school_name:
+            return base | {"accepted": False, "rejection_reason": "missing_school_name"}
+        if gap_key == "major_school_relation" and not _looks_undergraduate_level(text):
+            return base | {"accepted": False, "rejection_reason": "wrong_level"}
+        snippet = _best_evidence_snippet(page, [major_name, major_code, school_name])
+        return base | {
+            "accepted": True,
+            "school_name": school_name,
+            "major_name": major_name or None,
+            "major_code": major_code or None,
+            "evidence_snippet": snippet,
+            "confidence": "high" if _web_source_type_is_trusted(source_type) else "medium",
+        }
+
+    if gap_key == "admission_history":
+        required_terms = [term for term in [major_name, school_name, _slot_text(slots, "province_filter", "province")] if term]
+        if required_terms and not _text_contains_any(text, required_terms):
+            return base | {"accepted": False, "rejection_reason": "missing_context_terms"}
+        if not re.search(r"(录取|投档|分数|位次|最低分|最低位次)", text):
+            return base | {"accepted": False, "rejection_reason": "missing_admission_terms"}
+        return base | {
+            "accepted": True,
+            "school_name": school_name or None,
+            "major_name": major_name or None,
+            "evidence_snippet": _best_evidence_snippet(page, [major_name, school_name, "录取", "分数", "位次"]),
+            "confidence": "high" if _web_source_type_is_trusted(source_type) else "medium",
+        }
+
+    if gap_key in {"official_admission_rule", "single_subject_limit", "physical_exam_limit", "language_limit"}:
+        if not re.search(r"(招生章程|录取规则|招生简章|普通高校招生)", text):
+            return base | {"accepted": False, "rejection_reason": "missing_policy_terms"}
+        return base | {
+            "accepted": True,
+            "school_name": school_name or _extract_school_name_from_page(page, text) or None,
+            "policy_text": _best_evidence_snippet(page, [gap.get("label"), "招生章程", "录取规则"]),
+            "evidence_snippet": _best_evidence_snippet(page, [gap.get("label"), "招生章程", "录取规则"]),
+            "confidence": "high" if _web_source_type_is_trusted(source_type) else "medium",
+        }
+
+    snippet = _best_evidence_snippet(page, [gap.get("label"), major_name, school_name])
+    if not snippet:
+        return base | {"accepted": False, "rejection_reason": "page_does_not_fill_gap"}
+    return base | {
+        "accepted": True,
+        "school_name": school_name or None,
+        "major_name": major_name or None,
+        "evidence_snippet": snippet,
+        "confidence": "high" if _web_source_type_is_trusted(source_type) else "medium",
+    }
+
+
+def _evaluate_web_gap_evidence_with_judge(
+    gap: dict[str, Any],
+    page: dict[str, Any],
+    base: dict[str, Any],
+    body_text: str,
+    judge: Callable[[dict[str, Any]], dict[str, Any]],
+) -> dict[str, Any]:
+    context = _web_evidence_judge_context(gap, page, body_text)
+    try:
+        raw_result = judge(context)
+    except Exception as exc:
+        return base | {
+            "accepted": False,
+            "judge_mode": "llm",
+            "rejection_reason": "judge_failed",
+            "judge_error": f"{type(exc).__name__}: {exc}",
+        }
+
+    if not isinstance(raw_result, dict):
+        return base | {
+            "accepted": False,
+            "judge_mode": "llm",
+            "rejection_reason": "judge_invalid_result",
+        }
+
+    supports_gap = _judge_supports_gap(raw_result.get("supports_gap"))
+    confidence = _optional_text(raw_result.get("confidence")) or "unknown"
+    filled_fields = _normalize_judge_filled_fields(raw_result.get("filled_fields"))
+    evidence_quote = _optional_text(raw_result.get("evidence_quote")) or ""
+    reason = _optional_text(raw_result.get("reason")) or ""
+    missing_requirements = _string_list(raw_result.get("missing_requirements"))
+    next_action = _optional_text(raw_result.get("next_action")) or ""
+
+    common = base | {
+        "judge_mode": "llm",
+        "confidence": confidence,
+        "judge_reason": reason,
+        "missing_requirements": missing_requirements,
+        "next_action": next_action,
+    }
+    if not supports_gap:
+        return common | {
+            "accepted": False,
+            "rejection_reason": _optional_text(raw_result.get("rejection_reason")) or "judge_rejected",
+            "evidence_snippet": evidence_quote,
+        }
+    if not evidence_quote:
+        return common | {
+            "accepted": False,
+            "rejection_reason": "judge_missing_quote",
+        }
+    quote_repaired = False
+    original_evidence_quote = evidence_quote
+    if not _quote_in_body_text(evidence_quote, body_text):
+        repaired_quote = _repair_judge_evidence_quote(gap, page, body_text, filled_fields)
+        if not repaired_quote:
+            return common | {
+                "accepted": False,
+                "rejection_reason": "judge_quote_not_in_body",
+                "evidence_snippet": evidence_quote,
+                "judge_quote_verified": False,
+            }
+        evidence_quote = repaired_quote
+        quote_repaired = True
+
+    slots = gap.get("normalized_slots") if isinstance(gap.get("normalized_slots"), dict) else {}
+    result = common | {
+        "accepted": True,
+        "judge_quote_verified": True,
+        "school_name": _optional_text(filled_fields.get("school_name")) or _slot_text(slots, "school_name", "selected_school_name", "school_text") or None,
+        "major_name": _optional_text(filled_fields.get("major_name")) or _slot_text(slots, "major_name", "selected_name", "major_text", "selected_special_name") or None,
+        "major_code": _optional_text(filled_fields.get("major_code")) or _slot_text(slots, "major_code", "selected_code", "selected_special_id", "special_id") or None,
+        "school_level": _optional_text(filled_fields.get("school_level")) or _slot_text(slots, "school_level_filter", "school_level") or None,
+        "filled_fields": filled_fields,
+        "evidence_snippet": evidence_quote,
+    }
+    if quote_repaired:
+        result["judge_quote_repaired"] = True
+        result["original_evidence_quote"] = original_evidence_quote
+    return result
+
+
+def _repair_judge_evidence_quote(
+    gap: dict[str, Any],
+    page: dict[str, Any],
+    body_text: str,
+    filled_fields: dict[str, Any],
+) -> str:
+    gap_key = _optional_text(gap.get("gap_key")) or ""
+    if gap_key not in {"major_school_relation", "school_major_catalog", "school_major_relation", "official_major_intro"}:
+        return ""
+
+    slots = gap.get("normalized_slots") if isinstance(gap.get("normalized_slots"), dict) else {}
+    major_name = _optional_text(filled_fields.get("major_name")) or _slot_text(
+        slots, "major_name", "selected_name", "major_text", "selected_special_name"
+    )
+    major_code = _optional_text(filled_fields.get("major_code")) or _slot_text(
+        slots, "major_code", "selected_code", "selected_special_id", "special_id"
+    )
+    school_name = _optional_text(filled_fields.get("school_name")) or _slot_text(
+        slots, "school_name", "selected_school_name", "school_text"
+    )
+    major_terms = [term for term in [major_name, major_code] if term]
+    if not _text_contains_required_any(body_text, major_terms):
+        return ""
+    if school_name and not _text_contains_required_any(_page_evidence_text(page) + "\n" + body_text, [school_name]):
+        return ""
+    if gap_key == "major_school_relation" and not _looks_undergraduate_level(body_text):
+        return ""
+
+    terms = [major_name, major_code, school_name, "本科", "四年", "学士", "专业"]
+    return _best_body_evidence_snippet(body_text, terms, required_any=major_terms)
+
+
+def _text_contains_required_any(text: str, terms: list[str]) -> bool:
+    clean_terms = [_text(term) for term in terms if _text(term)]
+    if not clean_terms:
+        return False
+    lowered = text.lower()
+    return any(term.lower() in lowered for term in clean_terms)
+
+
+def _best_body_evidence_snippet(body_text: str, terms: list[Any], *, required_any: list[str]) -> str:
+    clean_terms = [_text(term) for term in terms if _text(term)]
+    required_terms = [_text(term) for term in required_any if _text(term)]
+    scored: list[tuple[int, int, str]] = []
+    for index, sentence in enumerate(_web_evidence_sentences(body_text)):
+        if required_terms and not _text_contains_required_any(sentence, required_terms):
+            continue
+        matched = sum(1 for term in clean_terms if term.lower() in sentence.lower())
+        if matched:
+            scored.append((matched, -index, sentence))
+    if not scored:
+        return ""
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return _bounded_snippet(scored[0][2])
+
+
+def _web_evidence_judge_context(gap: dict[str, Any], page: dict[str, Any], body_text: str) -> dict[str, Any]:
+    return {
+        "task": "judge_whether_page_body_fills_gap",
+        "gap_item": gap,
+        "evidence_contract": _web_gap_evidence_contract(gap),
+        "page": {
+            "url": page.get("url"),
+            "title": page.get("title"),
+            "source_type": page.get("source_type"),
+            "fetch_status": page.get("fetch_status"),
+            "content_type": page.get("content_type"),
+            "content_length": page.get("content_length"),
+        },
+        "body_text": body_text,
+        "output_schema": {
+            "supports_gap": "boolean",
+            "confidence": "high|medium|low",
+            "filled_fields": "object",
+            "evidence_quote": "verbatim quote from body_text",
+            "reason": "short explanation",
+            "missing_requirements": "array of missing evidence requirements",
+            "next_action": "accept|search_more|fetch_more|reject",
+        },
+    }
+
+
+def _normalize_judge_filled_fields(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    normalized = dict(value)
+    direct_keys = {"school_name", "major_name", "major_code", "school_level"}
+    if direct_keys & set(normalized):
+        return _normalize_judge_level_field(normalized)
+    for nested in value.values():
+        if not isinstance(nested, dict):
+            continue
+        if not (direct_keys & set(nested) or "undergraduate_level" in nested):
+            continue
+        for key in direct_keys:
+            if key not in normalized and nested.get(key) not in (None, ""):
+                normalized[key] = nested.get(key)
+        if "school_level" not in normalized and nested.get("undergraduate_level") is True:
+            normalized["school_level"] = "本科"
+        break
+    return _normalize_judge_level_field(normalized)
+
+
+def _normalize_judge_level_field(fields: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(fields)
+    if "school_level" not in normalized and normalized.get("undergraduate_level") is True:
+        normalized["school_level"] = "本科"
+    return normalized
+
+
+def _web_gap_evidence_contract(gap: dict[str, Any]) -> dict[str, Any]:
+    gap_key = _optional_text(gap.get("gap_key")) or ""
+    if gap_key in {"major_school_relation", "school_major_catalog", "school_major_relation", "official_major_intro"}:
+        return {
+            "claim_type": "school_offers_major",
+            "must_identify": ["school_name", "major_name_or_code"],
+            "must_support": ["the school offers or admits the major at the requested level"],
+            "body_only": True,
+            "search_title_or_snippet_alone_is_not_evidence": True,
+            "preferred_page_types": ["official major page", "undergraduate catalog", "admission plan", "official department major page"],
+        }
+    if gap_key == "admission_history":
+        return {
+            "claim_type": "admission_history",
+            "must_identify": ["school_name", "major_name_or_code", "province_or_year_context"],
+            "must_support": ["score, rank, admission, or plan history in the requested scope"],
+            "body_only": True,
+        }
+    if gap_key in {"official_admission_rule", "single_subject_limit", "physical_exam_limit", "language_limit"}:
+        return {
+            "claim_type": "official_policy_rule",
+            "must_identify": ["school_name_or_policy_scope"],
+            "must_support": ["official admission rule or policy constraint"],
+            "body_only": True,
+        }
+    return {
+        "claim_type": gap_key or "generic_gap",
+        "must_support": ["the body text directly fills the requested gap"],
+        "body_only": True,
+    }
+
+
+def _judge_supports_gap(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "support", "supports"}
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [_text(item) for item in value if _text(item)]
+    text = _text(value)
+    return [text] if text else []
+
+
+def _quote_in_body_text(quote: str, body_text: str) -> bool:
+    normalized_quote = re.sub(r"\s+", "", _text(quote))
+    normalized_body = re.sub(r"\s+", "", _text(body_text))
+    return bool(normalized_quote and normalized_quote in normalized_body)
+
+
+def _page_body_text(page: dict[str, Any]) -> str:
+    snippets = page.get("evidence_snippets") if isinstance(page.get("evidence_snippets"), list) else []
+    snippet_text = "\n".join(_text(snippet.get("text")) for snippet in snippets if isinstance(snippet, dict))
+    return _normalize_page_text(
+        "\n".join(
+            part
+            for part in [
+                _text(page.get("body_text")),
+                _text(page.get("text_excerpt")),
+                snippet_text,
+            ]
+            if part
+        )
+    )
+
+
+def _page_evidence_text(page: dict[str, Any]) -> str:
+    snippets = page.get("evidence_snippets") if isinstance(page.get("evidence_snippets"), list) else []
+    snippet_text = "\n".join(_text(snippet.get("text")) for snippet in snippets if isinstance(snippet, dict))
+    return "\n".join(
+        part
+        for part in [
+            _text(page.get("title")),
+            _text(page.get("search_snippet")),
+            _text(page.get("text_excerpt")),
+            snippet_text,
+        ]
+        if part
+    )
+
+
+def _extract_school_name_from_page(page: dict[str, Any], text: str) -> str:
+    for source in (_text(page.get("title")), _text(page.get("search_snippet")), text[:1000]):
+        names = _extract_school_names(source)
+        if names:
+            return names[0]
+    return ""
+
+
+def _text_contains_any(text: str, terms: list[str]) -> bool:
+    clean_terms = [_text(term) for term in terms if _text(term)]
+    if not clean_terms:
+        return True
+    lowered = text.lower()
+    return any(term.lower() in lowered for term in clean_terms)
+
+
+def _looks_undergraduate_level(text: str) -> bool:
+    if "专科" in text and "本科" not in text:
+        return False
+    if any(marker in text for marker in ("本科", "普通本科", "本科招生", "四年", "学士", "080")):
+        return True
+    return True
+
+
+def _best_evidence_snippet(page: dict[str, Any], terms: list[Any]) -> str:
+    snippets = page.get("evidence_snippets") if isinstance(page.get("evidence_snippets"), list) else []
+    clean_terms = [_text(term) for term in terms if _text(term)]
+    for snippet in snippets:
+        if not isinstance(snippet, dict):
+            continue
+        text = _text(snippet.get("text"))
+        if text and _text_contains_any(text, clean_terms):
+            return text
+    text = _page_evidence_text(page)
+    for sentence in _web_evidence_sentences(text):
+        if _text_contains_any(sentence, clean_terms):
+            return _bounded_snippet(sentence)
+    return _bounded_snippet(text)
+
+
+def _filled_item_from_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+    keys = [
+        "gap_key",
+        "label",
+        "school_name",
+        "major_name",
+        "major_code",
+        "school_level",
+        "policy_text",
+        "source_url",
+        "source_type",
+        "evidence_snippet",
+        "confidence",
+    ]
+    return {key: evidence.get(key) for key in keys if evidence.get(key) not in (None, "")}
 
 
 def _needs(tool_name: str, input_data: dict[str, Any], missing: list[str]) -> dict[str, Any]:
@@ -3236,7 +5686,6 @@ def _specialty_group_lookup_sql(
     school_id = str(school.get("school_id") or "")
     clauses = [
         "(g.deleted IS NULL OR g.deleted = b'0')",
-        "(gm.deleted IS NULL OR gm.deleted = b'0')",
         f"g.school_id = {sql_quote(school_id)}",
     ]
     if province:
@@ -3259,6 +5708,7 @@ def _specialty_group_lookup_sql(
         )
 
     return f"""
+/* specialty_group_lookup_matched_groups */
 SELECT g.id AS group_db_id, g.year, g.province, g.group_code, g.group_name, g.group_type,
        g.plan_count AS group_plan_count, g.admission_count AS group_admission_count,
        g.min_score AS group_min_score, g.min_rank AS group_min_rank,
@@ -3266,11 +5716,17 @@ SELECT g.id AS group_db_id, g.year, g.province, g.group_code, g.group_name, g.gr
        gm.plan_count AS major_plan_count, gm.admission_count AS major_admission_count,
        gm.min_score AS major_min_score, gm.min_rank AS major_min_rank,
        gm.subject_requirement, gm.remark, gm.batch
-FROM edu_college_specialty_group g
+FROM (
+  SELECT g.id AS group_id
+  FROM edu_college_specialty_group g
+  WHERE {' AND '.join(clauses)}
+  ORDER BY g.year DESC, g.province, g.group_code, g.id
+  LIMIT {int(limit)}
+) matched_groups
+JOIN edu_college_specialty_group g ON g.id = matched_groups.group_id
 JOIN edu_specialty_group_major gm ON gm.group_id = g.id
-WHERE {' AND '.join(clauses)}
-ORDER BY g.year DESC, g.province, g.group_code, gm.special_code, gm.special_name
-LIMIT {int(limit)}
+WHERE (gm.deleted IS NULL OR gm.deleted = b'0')
+ORDER BY g.year DESC, g.province, g.group_code, gm.special_code, gm.special_name, gm.id
 """.strip()
 
 
@@ -3469,6 +5925,160 @@ def _major_code_or_name_clause(code_column: str, name_column: str, major: dict[s
     return "(" + " OR ".join(clauses or ["1 = 0"]) + ")"
 
 
+SELECTED_SUBJECT_NAMES = {"物理", "化学", "生物", "政治", "思想政治", "历史", "地理", "技术"}
+
+
+def _resolve_score_rank_subject(
+    client: Any,
+    province_id: str,
+    subject_type: str | None,
+    year: int | None,
+) -> dict[str, Any]:
+    rows = client.query(_score_rank_subject_mode_sql(province_id, year))
+    available_subject_types = _distinct_texts(row.get("subject_type") for row in rows)
+    mode_year = next((_as_int(row.get("year")) for row in rows if _as_int(row.get("year")) is not None), None)
+    subject_mode = _score_rank_subject_mode(available_subject_types)
+    input_subject_type = _text(subject_type)
+    warnings: list[str] = []
+
+    rank_subject_type = ""
+    selected_subjects: list[str] = []
+    subject_type_candidates: list[str] = []
+
+    if subject_mode == "3+3":
+        if input_subject_type and input_subject_type != "综合":
+            if input_subject_type in SELECTED_SUBJECT_NAMES:
+                rank_subject_type = "综合"
+                subject_type_candidates = ["综合"]
+                selected_subjects = [input_subject_type]
+                warnings.append(
+                    f"该省该年份一分一段为综合口径；输入“{input_subject_type}”更像选考科目，位次已按“综合”口径查询。"
+                )
+            else:
+                warnings.append(
+                    f"该省该年份一分一段为“综合”口径，但输入“{input_subject_type}”不是可识别的选考科目；请补充或更正科类。"
+                )
+        else:
+            rank_subject_type = "综合"
+            subject_type_candidates = ["综合"]
+            if not input_subject_type:
+                warnings.append("该省该年份一分一段只有“综合”口径，已自动按“综合”查询。")
+    elif subject_mode in {"3+1+2", "traditional"}:
+        if input_subject_type:
+            candidates = _subject_type_candidates(input_subject_type)
+            matching_candidates = [candidate for candidate in candidates if candidate in available_subject_types]
+            if matching_candidates:
+                rank_subject_type = matching_candidates[0]
+                subject_type_candidates = candidates
+            else:
+                warnings.append(
+                    f"该省该年份一分一段科类为“{'、'.join(available_subject_types)}”，请补充或更正科类。"
+                )
+        else:
+            warnings.append(f"该省该年份一分一段按“{'、'.join(available_subject_types)}”分列，请补充科类。")
+    else:
+        if input_subject_type:
+            rank_subject_type = input_subject_type
+            subject_type_candidates = _subject_type_candidates(input_subject_type)
+            if not available_subject_types:
+                warnings.append("本地库暂未解析出该省该年份的一分一段科类口径，已按输入科类直接查询。")
+        else:
+            warnings.append("本地库暂未解析出该省该年份的一分一段科类口径，请补充科类。")
+
+    normalized_slots = {
+        "input_subject_type": input_subject_type,
+        "subject_mode": subject_mode,
+        "available_subject_types": available_subject_types,
+        "selected_subjects": selected_subjects,
+    }
+    if mode_year is not None:
+        normalized_slots["subject_mode_year"] = mode_year
+    if rank_subject_type:
+        normalized_slots["rank_subject_type"] = rank_subject_type
+        normalized_slots["subject_type_candidates"] = subject_type_candidates
+
+    return {
+        "subject_mode": subject_mode,
+        "available_subject_types": available_subject_types,
+        "rank_subject_type": rank_subject_type,
+        "selected_subjects": selected_subjects,
+        "subject_type_candidates": subject_type_candidates,
+        "warnings": warnings,
+        "normalized_slots": normalized_slots,
+    }
+
+
+def _score_rank_subject_mode(available_subject_types: list[str]) -> str:
+    subject_set = set(available_subject_types)
+    if subject_set == {"综合"}:
+        return "3+3"
+    if {"物理", "历史"}.issubset(subject_set):
+        return "3+1+2"
+    if {"理科", "文科"}.issubset(subject_set):
+        return "traditional"
+    return "unknown"
+
+
+def _rank_subject_normalized(
+    subject_resolution: dict[str, Any] | None,
+    score_rank_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if score_rank_result:
+        normalized = score_rank_result.get("normalized_slots") or {}
+        return {
+            key: value
+            for key, value in normalized.items()
+            if key
+            in {
+                "input_subject_type",
+                "subject_mode",
+                "available_subject_types",
+                "selected_subjects",
+                "subject_mode_year",
+                "rank_subject_type",
+                "subject_type_candidates",
+                "matched_subject_type",
+            }
+        }
+    if subject_resolution:
+        return dict(subject_resolution.get("normalized_slots") or {})
+    return {}
+
+
+def _rank_subject_warnings(
+    subject_resolution: dict[str, Any] | None,
+    score_rank_result: dict[str, Any] | None,
+) -> list[str]:
+    if score_rank_result:
+        return list(score_rank_result.get("warnings") or [])
+    if subject_resolution:
+        return list(subject_resolution.get("warnings") or [])
+    return []
+
+
+def _score_rank_subject_mode_sql(province_id: str, year: int | None) -> str:
+    if year:
+        year_filter = f"AND year = {int(year)}"
+    else:
+        year_filter = f"""
+AND CAST(year AS UNSIGNED) = (
+  SELECT MAX(CAST(year AS UNSIGNED))
+  FROM edu_score_rank
+  WHERE deleted = 0 AND province_id = {sql_quote(province_id)}
+)
+""".strip()
+    return f"""
+/* score_rank_subject_mode_for_province */
+SELECT year, subject_type
+FROM edu_score_rank
+WHERE deleted = 0
+  AND province_id = {sql_quote(province_id)}
+  {year_filter}
+GROUP BY year, subject_type
+ORDER BY CAST(year AS UNSIGNED) DESC, subject_type
+""".strip()
+
+
 def _subject_type_candidates(subject_type: str | None) -> list[str]:
     """Return conservative subject-type aliases for score-rank lookup.
 
@@ -3489,7 +6099,22 @@ def _subject_type_candidates(subject_type: str | None) -> list[str]:
     return _distinct_texts([primary] + alias_map.get(primary, []))
 
 
-def _score_to_rank_sql(province_id: str, subject_types: list[str], score: int | float | str, year: int | None) -> str:
+def _score_to_rank_score_int(score: int | float | str) -> int | None:
+    if isinstance(score, bool):
+        return None
+    if isinstance(score, int):
+        return score
+    if isinstance(score, float):
+        return int(score) if score.is_integer() else None
+    text = _text(score)
+    if re.fullmatch(r"[+-]?\d+", text):
+        return int(text)
+    if re.fullmatch(r"[+-]?\d+\.0+", text):
+        return int(float(text))
+    return None
+
+
+def _score_to_rank_sql(province_id: str, subject_types: list[str], score: int, year: int | None) -> str:
     year_clause = f"AND year = {int(year)}" if year else ""
     subject_values = ", ".join(sql_quote(value) for value in subject_types if value)
     subject_clause = f"AND subject_type IN ({subject_values})" if subject_values else "AND 1 = 0"
@@ -3504,10 +6129,10 @@ FROM edu_score_rank
 WHERE deleted = 0
   AND province_id = {sql_quote(province_id)}
   {subject_clause}
-  AND score = {int(float(score))}
+  AND score = {int(score)}
   {year_clause}
-ORDER BY {subject_order}, CAST(year AS UNSIGNED) DESC
-LIMIT 1
+ORDER BY CAST(year AS UNSIGNED) DESC, {subject_order}, batch_type, highest_rank, lowest_rank
+LIMIT 2
 """.strip()
 
 
@@ -3995,10 +6620,12 @@ def _group_specialty_group_rows(rows: list[dict[str, Any]], limit: int) -> list[
 
     for row in rows:
         key = (
+            _text(row.get("group_db_id")),
             _text(row.get("year")),
             _text(row.get("province")),
             _text(row.get("group_code")),
             _text(row.get("group_name")),
+            _text(row.get("group_type")),
         )
         if key not in group_index:
             if len(groups) >= limit:
@@ -4325,7 +6952,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = subparsers.add_parser("score_to_rank")
     p.add_argument("--province", required=True)
-    p.add_argument("--subject-type", required=True)
+    p.add_argument("--subject-type")
     p.add_argument("--score", required=True)
     p.add_argument("--year", type=int)
 
@@ -4460,8 +7087,45 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--question-type", required=True)
     p.add_argument("--available-fields", nargs="*", default=[])
 
+    p = subparsers.add_parser("web_evidence_search")
+    p.add_argument("--query", required=True)
+    p.add_argument("--search-scope")
+    p.add_argument("--domain", dest="domains", action="append")
+    p.add_argument("--limit", type=int, default=5)
+
+    p = subparsers.add_parser("web_evidence_fetch")
+    p.add_argument("--query", required=True)
+    p.add_argument("--search-scope")
+    p.add_argument("--domain", dest="domains", action="append")
+    p.add_argument("--limit", type=int, default=5)
+    p.add_argument("--fetch-limit", type=int, default=3)
+    p.add_argument("--evidence-limit", type=int, default=5)
+    p.add_argument("--source-policy", default="official_only")
+
+    p = subparsers.add_parser("web_gap_fill")
+    p.add_argument("--gap-items-json", required=True)
+    p.add_argument("--question")
+    p.add_argument("--max-rounds", type=int, default=3)
+    p.add_argument("--max-fetches-per-round", type=int, default=5)
+    p.add_argument("--source-policy", default="official_only")
+    p.add_argument("--max-seconds", type=float)
+
     args = parser.parse_args(argv)
     tools = RetrievalTools(MysqlCliClient(DbConfig.from_env()))
+    gap_items = None
+    if args.tool == "web_gap_fill":
+        try:
+            gap_items = json.loads(args.gap_items_json)
+        except json.JSONDecodeError as exc:
+            _print_json(
+                tool_result(
+                    "web_gap_fill",
+                    "error",
+                    {"gap_items_json": args.gap_items_json},
+                    warnings=[f"gap-items-json is not valid JSON: {exc}"],
+                )
+            )
+            return 1
 
     dispatch = {
         "school_lookup": lambda: tools.school_lookup(args.school),
@@ -4562,6 +7226,24 @@ def main(argv: list[str] | None = None) -> int:
         "major_market_reference": lambda: tools.major_market_reference(args.major, args.sample_limit),
         "civil_service_role_search": lambda: tools.civil_service_role_search(args.major, args.year, args.province, args.limit),
         "data_gap_detection": lambda: tools.data_gap_detection(args.question_type, args.available_fields),
+        "web_evidence_search": lambda: tools.web_evidence_search(args.query, args.search_scope, args.domains, args.limit),
+        "web_evidence_fetch": lambda: tools.web_evidence_fetch(
+            args.query,
+            args.search_scope,
+            args.domains,
+            args.limit,
+            args.fetch_limit,
+            args.evidence_limit,
+            args.source_policy,
+        ),
+        "web_gap_fill": lambda: tools.web_gap_fill(
+            gap_items,
+            args.question,
+            args.max_rounds,
+            args.max_fetches_per_round,
+            args.source_policy,
+            args.max_seconds,
+        ),
     }
     _print_json(dispatch[args.tool]())
     return 0
