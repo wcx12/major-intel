@@ -170,6 +170,8 @@
 scripts/ingest_rysxai_data.py
 ```
 
+真实实现位于 `src/major_intel/ingestion/rysxai_data.py`。`scripts/ingest_rysxai_data.py` 是兼容 CLI wrapper；新的结构化入口是 `scripts/ingestion/ingest_rysxai_data.py`。
+
 建议支持命令：
 
 ```text

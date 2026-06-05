@@ -3,6 +3,7 @@ node_modules/
 .venv/
 venv/
 __pycache__/
+.pytest_cache/
 
 # Environment
 .env
@@ -20,6 +21,7 @@ out/
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
+logs/
 
 # Local tooling
 .DS_Store
@@ -30,13 +32,35 @@ Thumbs.db
 # Data and cache
 data/raw/
 data/cache/
+data/interim/
+data/cleaned/
 data/processed/
 data/logs/
+clean/
+datasets/**/raw/
+datasets/**/cache/
+datasets/**/interim/
 reports/rysxai/
 reports/retrieval_smoke*.json
+outputs/
+tmp/
 gaokao_test_*.sql
 *.sqlite
 *.db
+
+# Local crawl batches and generated evidence probes.
+# Keep these files reviewable on disk, but do not let hundreds of one-off
+# search/probe outputs enter a public GitHub commit by accident.
+data/seeds/*.csv
+data/seeds/*.jsonl
+!data/seeds/rysxai_professions.full.csv
+!data/seeds/rysxai_professions.sample.csv
+!data/seeds/rysxai_universities.csv
+!data/seeds/README.md
+reports/*.json
+reports/*.jsonl
+reports/*.md
+clean_*.py
 
 # Local research/reference workspaces
 gaokao-zhiyuan-projects/

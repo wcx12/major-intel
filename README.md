@@ -6,19 +6,21 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 
 ## 当前快照
 
-更新时间：2026-05-21
+更新时间：2026-06-05
 
 当前已经完成：
 
 - 本地 MySQL 检索工具层。
-- 27 个正式 function call schema 与 dispatcher。
-- 27 个正式工具的真实库 smoke 矩阵，当前展开后为 305 个用例。
+- 30 个正式 function call schema 与 dispatcher，其中包含 3 个联网证据补全入口。
+- 核心本地检索工具的真实库 smoke 矩阵，当前展开后为 305 个用例。
 - 第一版 SQL-first RAG：本地 function call 负责检索，MySQL 查询结果作为回答上下文。
 - DeepSeek function-call agent。
 - 离线规则自然语言入口。
 - 统一 agent 入口，能在规则入口和 DeepSeek agent 之间自动协调。
 - 查询日志、缓存、工具轨迹和数据缺口队列四类 MySQL 运营表。
 - rysxai 专业市场、考公岗位、转专业政策等第三方数据接入链路。
+- 仓库结构迁移：核心代码进入 `src/major_intel/`，`scripts/` 保留兼容 CLI 入口，测试按模块分层。
+- GitHub Release 数据资产发布：核心 MySQL dump 不上传，其它本地数据资产通过 Release 打包保存。
 
 当前仍未完成：
 
@@ -28,29 +30,33 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 
 更细的阶段性状态见 [docs/status/current-state.md](docs/status/current-state.md)。
 
-如果要人工逐个测试 27 个底层工具，命令清单见 [docs/status/retrieval-tool-manual-test-commands.md](docs/status/retrieval-tool-manual-test-commands.md)。
+如果要人工逐个测试底层工具，命令清单见 [docs/status/retrieval-tool-manual-test-commands.md](docs/status/retrieval-tool-manual-test-commands.md)。
+
+README 与数据发布审视记录见 [docs/status/repository-readme-and-data-release-audit-2026-06-05.md](docs/status/repository-readme-and-data-release-audit-2026-06-05.md)。
 
 ## 系统分层
 
 ```text
 用户自然语言问题
   -> scripts/retrieval_agent_entrypoint.py
+       兼容 CLI wrapper，真实实现位于 src/major_intel/agents/
+  -> src/major_intel/agents/retrieval_agent_entrypoint.py
        auto 模式：先走离线规则入口，复杂/未知问题回退 DeepSeek
-  -> scripts/natural_language_entrypoint.py
+  -> src/major_intel/agents/natural_language_entrypoint.py
        规则识别 intent、slots、tool_plan
-  -> scripts/deepseek_retrieval_agent.py
+  -> src/major_intel/agents/deepseek_retrieval_agent.py
        DeepSeek 基于完整 function schema 自动选择工具
-  -> scripts/retrieval_function_registry.py
+  -> src/major_intel/function_calls/registry.py
        function schema 注册、参数校验、dispatcher
-  -> scripts/retrieval_tools.py
+  -> src/major_intel/function_calls/retrieval_tools.py
        MySQL 检索工具真实实现
-  -> scripts/agent_query_storage.py
+  -> src/major_intel/storage/agent_query_storage.py
        query_logs / retrieval_cache / agent_tool_traces / data_gap_queue
 ```
 
 第一版 RAG 的口径是 SQL-first：
 
-- `retrieval_function_registry.py` 暴露的 27 个 function call 就是 retriever。
+- `retrieval_function_registry.py` 暴露的 30 个 function call 就是 retriever。
 - `retrieval_tools.py` 查询本地 MySQL 后返回 `data`、`scope_notes`、`warnings`、`data_gaps` 和 `source_tables`。
 - agent 只基于这些工具结果组织回答，不能绕过工具凭模型记忆补事实。
 - 查不到的数据进入 `data_gap_queue` 和 `data_gap_evidence_tasks`，后续再由联网/人工流程补证据。
@@ -66,24 +72,77 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 ## 目录结构
 
 ```text
+src/major_intel/function_calls/        function schema、dispatcher、检索工具实现
+src/major_intel/agents/                规则入口、DeepSeek agent、统一 agent 入口
+src/major_intel/storage/               MySQL client、缓存、轨迹、缺口队列和别名初始化
+src/major_intel/evaluation/            smoke runner、边界评测和 oracle 代码
+src/major_intel/datasets/dialogue/     高考志愿对话数据集清洗与构建逻辑
+src/major_intel/crawlers/              rysxai 等第三方数据 crawler 实现
+src/major_intel/ingestion/             爬取数据写入 MySQL 的入库实现
+src/major_intel/reporting/             爬取数据报告和 dashboard 构建实现
+
+scripts/*.py                           兼容 CLI wrapper，保留原手动测试命令
+scripts/datasets/                      数据集任务的结构化 CLI wrapper
+scripts/crawlers/                      crawler 任务的结构化 CLI wrapper
+scripts/ingestion/                     入库任务的结构化 CLI wrapper
+scripts/reports/                       报告/dashboard 任务的结构化 CLI wrapper
+scripts/evaluation/                    评估任务的结构化 CLI wrapper
+scripts/rysxai_*                       第三方数据采集、报告、dashboard 脚本
+scripts/one_off/official_sources/      历史批次官网证据采集和补数脚本，不作为稳定 API
+
+docs/architecture/                     仓库结构与系统架构
+docs/datasets/                         数据集来源、清洗口径和使用边界
 docs/research/                         起点调研与背景材料
 docs/specs/                            设计文档、工具规划、数据接入方案
 docs/status/current-state.md           当前状态快照
 
-scripts/local_retrieval_mvp.py         最早的本地检索 CLI MVP
-scripts/retrieval_tools.py             27 个底层检索工具的真实实现
-scripts/retrieval_function_registry.py function schema 注册与 dispatcher
-scripts/natural_language_entrypoint.py 离线规则自然语言入口
-scripts/deepseek_retrieval_agent.py    DeepSeek function-call agent
-scripts/retrieval_agent_entrypoint.py  统一 agent 入口
-scripts/agent_query_storage.py         查询日志、缓存、工具轨迹、缺口队列存储层
-scripts/run_retrieval_smoke_cases.py   批量 smoke case runner
-scripts/setup_entity_aliases.py        实体别名表初始化脚本
-scripts/rysxai_*                       第三方数据采集、报告、dashboard 脚本
-
-tests/                                 单元测试
+tests/agents/                          Agent 入口测试
+tests/retrieval/                       function call registry 与底层检索测试
+tests/evaluation/                      边界评估和 smoke runner 测试
+tests/crawlers/                        通用 crawler 和证据检索测试
+tests/ingestion/                       入库、清洗、数据包构建测试
+tests/reporting/                       报告和 dashboard 构建测试
+tests/datasets/                        对话数据集构建测试
+tests/one_off/official_sources/        历史批次脚本回归测试
+datasets/dialogue/                     已提交的对话数据集快照和清单
 data/seeds/                            可提交的小型种子数据
+data/raw/、data/processed/、tmp/        本地数据与临时产物，默认不提交
 ```
+
+## GitHub Release 数据资产
+
+代码、文档、测试和少量样例数据通过 Git 提交；大体积爬取数据、清洗数据、报告输出和本地参考资料通过 GitHub Release 保存。
+
+当前主要 Release：
+
+| Release | 用途 | 地址 |
+|---|---|---|
+| `full-local-assets-2026-06-05` | 完整本地资产快照，除核心 MySQL dump 和本地密钥外，包含本地数据资产、爬取产物、报告输出和参考资料 | <https://github.com/wcx12/major-intel/releases/tag/full-local-assets-2026-06-05> |
+| `crawled-data-2026-06-05` | 精简爬取数据快照，只包含结构化爬取数据、seed、graduate outcomes 输出 | <https://github.com/wcx12/major-intel/releases/tag/crawled-data-2026-06-05> |
+
+从 GitHub 仓库页面查看 Release：
+
+1. 打开 <https://github.com/wcx12/major-intel>。
+2. 在仓库右侧点击 `Releases`。
+3. 选择对应 Release。
+4. 展开 `Assets` 下载 zip。
+
+使用 GitHub CLI 查看：
+
+```powershell
+gh release list --repo wcx12/major-intel
+gh release view full-local-assets-2026-06-05 --repo wcx12/major-intel
+```
+
+所有 Release zip 内部都保留仓库相对路径。下载后在仓库根目录解压，即可恢复对应本地目录，例如 `data/raw/`、`data/processed/`、`reports/`、`outputs/graduate_outcomes/`。
+
+明确不上传：
+
+- `gaokao_test_*.sql`：核心本地 MySQL dump。
+- `.env`：本地数据库密码和 API Key 等密钥。
+- `node_modules`、`__pycache__`、`.pytest_cache`、本地依赖包缓存。
+
+完整说明见 [docs/status/repository-readme-and-data-release-audit-2026-06-05.md](docs/status/repository-readme-and-data-release-audit-2026-06-05.md)。
 
 ## 本地环境
 
@@ -105,7 +164,7 @@ $env:GAOKAO_DB_PASSWORD = "<你的本地密码>"
 
 ## 已完成的正式 Function Call
 
-当前正式注册并可被 agent 调用的 function call 一共 27 个。注册入口是 [scripts/retrieval_function_registry.py](scripts/retrieval_function_registry.py)，真实实现是 [scripts/retrieval_tools.py](scripts/retrieval_tools.py)。
+当前正式注册并可被 agent 调用的 function call 一共 30 个。兼容 CLI 入口是 [scripts/retrieval_function_registry.py](scripts/retrieval_function_registry.py)，真实注册实现是 [src/major_intel/function_calls/registry.py](src/major_intel/function_calls/registry.py)，真实检索实现是 [src/major_intel/function_calls/retrieval_tools.py](src/major_intel/function_calls/retrieval_tools.py)。
 
 | 工具 | 作用 | 当前口径 |
 |---|---|---|
@@ -327,17 +386,20 @@ python scripts/run_retrieval_smoke_cases.py --sample-per-tool 1 --report reports
 
 ## 当前测试状态
 
-最近一次完整验证：
+最近一次结构迁移验证：
 
 ```text
-python -m unittest tests.test_retrieval_smoke_runner
-Ran 7 tests
+python -m compileall -q src scripts tests
 OK
 
 python -m unittest discover -s tests
-Ran 133 tests
+Ran 734 tests in 95.976s
 OK
+```
 
+最近一次真实库 smoke 验证记录：
+
+```text
 python scripts/run_retrieval_smoke_cases.py --report reports/retrieval_smoke_27_tools_full.json --timeout 60
 total 305, passed 305, failed 0, quality_misses 0
 ```
@@ -351,16 +413,20 @@ total 305, passed 305, failed 0, quality_misses 0
 - 统一 agent 入口。
 - 查询日志、缓存、工具轨迹存储层。
 - rysxai 市场、考公、转专业数据处理链路。
+- 升学/官网证据 crawler、clean package、dashboard 的历史批次回归测试。
 
 ## 数据边界
 
-默认不提交：
+默认不进 Git 提交，但可通过 Release 打包保存：
 
 - `data/raw/`
 - `data/processed/`
 - `data/logs/`
 - `reports/rysxai/`
 - `reports/retrieval_smoke*.json`
+
+永远不上传公开远程：
+
 - `gaokao_test_*.sql`
 - 本地数据库 dump
 - 本地 `.env`

@@ -72,7 +72,7 @@
 
 ### 当前已落地能力快照
 
-截至 2026-05-21，当前已经落地 27 个可调用检索入口：
+截至 2026-06-04，当前已经落地 30 个可调用检索入口：
 
 ```text
 school_lookup
@@ -102,6 +102,9 @@ admission_history
 major_market_reference
 civil_service_role_search
 data_gap_detection
+web_evidence_search
+web_evidence_fetch
+web_gap_fill
 ```
 
 已经具备的核心能力：
@@ -123,10 +126,10 @@ data_gap_detection
 
 已经完成的基础设施能力：
 
-- 已完成 `scripts/retrieval_tools.py` 工具层。
-- 已完成 `scripts/retrieval_function_registry.py` function schema 注册层和 dispatcher。
+- 已完成 `src/major_intel/function_calls/retrieval_tools.py` 工具层；`scripts/retrieval_tools.py` 作为兼容 CLI wrapper 保留。
+- 已完成 `src/major_intel/function_calls/registry.py` function schema 注册层和 dispatcher；`scripts/retrieval_function_registry.py` 作为兼容 CLI wrapper 保留。
 - 已完成 `scripts/run_retrieval_smoke_cases.py` 本地批量烟测脚本。
-- 已完成 27 个正式工具的真实库 smoke 矩阵：`data/retrieval_smoke_cases.json` 展开后为 305 个用例，并且会自动校验是否覆盖注册表里的全部工具名。
+- 已完成核心 SQL-first 工具的真实库 smoke 矩阵：`data/retrieval_smoke_cases.json` 展开后为 305 个用例；联网证据补全工具由 `tests/function_calls/web_*` 覆盖。
 - 已修复 MySQL CLI 长文本换行解析问题，避免专业介绍字段里的换行被拆成假候选记录。
 - 已修复录取历史表和学校基础表的学校关联键问题：`edu_school_admission_stats.school_id` 应按 `edu_university.code + name` 关联，而不是按 `edu_university.school_id` 关联。
 
@@ -947,13 +950,13 @@ data_gap_detection
 - 第三阶段 `specialty_group_risk`、`comparison_query`、`employment_summary`、`major_market_reference`、`source_trace_lookup` 已完成第一版。
 - 第四阶段 `transfer_policy_lookup`、`fee_and_campus_lookup` 已完成第一版；`major_streaming_policy_lookup`、`civil_service_mapping`、`policy_rule_lookup` 已完成保守接口第一版。
 - `major_market_reference` 和 `civil_service_role_search` 已经提前实现，用于读取已经接入的市场样本和考公岗位样本。
-- 已完成 agent function schema 注册层：`scripts/retrieval_function_registry.py`。
-- 已完成自然语言总入口离线规则第一版：`scripts/natural_language_entrypoint.py`，可把高频中文问题自动映射到 intent、slots 和工具计划。
-- 已完成 DeepSeek function-call agent：`scripts/deepseek_retrieval_agent.py`，可让 LLM 基于同一套 function schema 自动选择本地工具。
-- 已完成统一入口：`scripts/retrieval_agent_entrypoint.py`，可在 `auto` 模式下优先使用规则入口，并把复杂/未知问题交给 DeepSeek agent。
-- 已完成统一入口缓存/日志/缺口队列存储层：`scripts/agent_query_storage.py`，可创建 `query_logs`、`retrieval_cache`、`agent_tool_traces`、`data_gap_queue`。
-- 已完成本地批量烟测脚本：`scripts/run_retrieval_smoke_cases.py`。
-- 已完成数据库别名初始化脚本：`scripts/setup_entity_aliases.py`，会创建/维护 `entity_aliases` 与 `entity_alias_candidates`。
+- 已完成 agent function schema 注册层：`src/major_intel/function_calls/registry.py`，并保留 `scripts/retrieval_function_registry.py` 兼容入口。
+- 已完成自然语言总入口离线规则第一版：`src/major_intel/agents/natural_language_entrypoint.py`，可把高频中文问题自动映射到 intent、slots 和工具计划；`scripts/natural_language_entrypoint.py` 保留兼容入口。
+- 已完成 DeepSeek function-call agent：`src/major_intel/agents/deepseek_retrieval_agent.py`，可让 LLM 基于同一套 function schema 自动选择本地工具；`scripts/deepseek_retrieval_agent.py` 保留兼容入口。
+- 已完成统一入口：`src/major_intel/agents/retrieval_agent_entrypoint.py`，可在 `auto` 模式下优先使用规则入口，并把复杂/未知问题交给 DeepSeek agent；`scripts/retrieval_agent_entrypoint.py` 保留兼容入口。
+- 已完成统一入口缓存/日志/缺口队列存储层：`src/major_intel/storage/agent_query_storage.py`，可创建 `query_logs`、`retrieval_cache`、`agent_tool_traces`、`data_gap_queue`；`scripts/agent_query_storage.py` 保留兼容入口。
+- 已完成本地批量烟测脚本：`src/major_intel/evaluation/run_retrieval_smoke_cases.py`；`scripts/run_retrieval_smoke_cases.py` 保留兼容入口。
+- 已完成数据库别名初始化脚本：`src/major_intel/storage/setup_entity_aliases.py`，会创建/维护 `entity_aliases` 与 `entity_alias_candidates`；`scripts/setup_entity_aliases.py` 保留兼容入口。
 - 已修复 MySQL CLI 长文本换行解析问题，`major_lookup` 不会再把专业介绍里的“关键词/课程列表”拆成假候选记录。
 - 已完成 `major_lookup` 数据库别名解析，真实库验证“计科”返回“计算机科学与技术”，“软工”返回“软件工程”。
 - 当前单元测试覆盖：`python -m unittest discover -s tests`，最近一次验证为 125 个测试通过；自然语言入口专项测试覆盖 13 个场景，统一入口专项测试覆盖 9 个场景，缓存/日志/缺口队列专项测试覆盖 7 个场景。

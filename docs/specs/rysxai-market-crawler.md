@@ -10,6 +10,10 @@ This crawler collects three source-level C datasets from rysxai public JSON APIs
 
 These records are market observations only. They must not be presented as official school-major graduate outcomes.
 
+Implementation lives in `src/major_intel/crawlers/rysxai_market_crawler.py`.
+`scripts/rysxai_market_crawler.py` remains as the compatibility CLI wrapper,
+and `scripts/crawlers/rysxai_market_crawler.py` is the structured CLI path.
+
 ## Inputs
 
 Use rysxai profession ids, either directly:
