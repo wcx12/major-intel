@@ -6,7 +6,7 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 
 ## 当前快照
 
-更新时间：2026-05-21
+更新时间：2026-06-05
 
 当前已经完成：
 
@@ -19,6 +19,8 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 - 统一 agent 入口，能在规则入口和 DeepSeek agent 之间自动协调。
 - 查询日志、缓存、工具轨迹和数据缺口队列四类 MySQL 运营表。
 - rysxai 专业市场、考公岗位、转专业政策等第三方数据接入链路。
+- 仓库结构迁移：核心代码进入 `src/major_intel/`，`scripts/` 保留兼容 CLI 入口，测试按模块分层。
+- GitHub Release 数据资产发布：核心 MySQL dump 不上传，其它本地数据资产通过 Release 打包保存。
 
 当前仍未完成：
 
@@ -29,6 +31,8 @@ Major Intel 是一个面向高考志愿、院校专业选择和数据可信问�
 更细的阶段性状态见 [docs/status/current-state.md](docs/status/current-state.md)。
 
 如果要人工逐个测试底层工具，命令清单见 [docs/status/retrieval-tool-manual-test-commands.md](docs/status/retrieval-tool-manual-test-commands.md)。
+
+README 与数据发布审视记录见 [docs/status/repository-readme-and-data-release-audit-2026-06-05.md](docs/status/repository-readme-and-data-release-audit-2026-06-05.md)。
 
 ## 系统分层
 
@@ -104,6 +108,41 @@ datasets/dialogue/                     已提交的对话数据集快照和清�
 data/seeds/                            可提交的小型种子数据
 data/raw/、data/processed/、tmp/        本地数据与临时产物，默认不提交
 ```
+
+## GitHub Release 数据资产
+
+代码、文档、测试和少量样例数据通过 Git 提交；大体积爬取数据、清洗数据、报告输出和本地参考资料通过 GitHub Release 保存。
+
+当前主要 Release：
+
+| Release | 用途 | 地址 |
+|---|---|---|
+| `full-local-assets-2026-06-05` | 完整本地资产快照，除核心 MySQL dump 和本地密钥外，包含本地数据资产、爬取产物、报告输出和参考资料 | <https://github.com/wcx12/major-intel/releases/tag/full-local-assets-2026-06-05> |
+| `crawled-data-2026-06-05` | 精简爬取数据快照，只包含结构化爬取数据、seed、graduate outcomes 输出 | <https://github.com/wcx12/major-intel/releases/tag/crawled-data-2026-06-05> |
+
+从 GitHub 仓库页面查看 Release：
+
+1. 打开 <https://github.com/wcx12/major-intel>。
+2. 在仓库右侧点击 `Releases`。
+3. 选择对应 Release。
+4. 展开 `Assets` 下载 zip。
+
+使用 GitHub CLI 查看：
+
+```powershell
+gh release list --repo wcx12/major-intel
+gh release view full-local-assets-2026-06-05 --repo wcx12/major-intel
+```
+
+所有 Release zip 内部都保留仓库相对路径。下载后在仓库根目录解压，即可恢复对应本地目录，例如 `data/raw/`、`data/processed/`、`reports/`、`outputs/graduate_outcomes/`。
+
+明确不上传：
+
+- `gaokao_test_*.sql`：核心本地 MySQL dump。
+- `.env`：本地数据库密码和 API Key 等密钥。
+- `node_modules`、`__pycache__`、`.pytest_cache`、本地依赖包缓存。
+
+完整说明见 [docs/status/repository-readme-and-data-release-audit-2026-06-05.md](docs/status/repository-readme-and-data-release-audit-2026-06-05.md)。
 
 ## 本地环境
 
@@ -378,13 +417,16 @@ total 305, passed 305, failed 0, quality_misses 0
 
 ## 数据边界
 
-默认不提交：
+默认不进 Git 提交，但可通过 Release 打包保存：
 
 - `data/raw/`
 - `data/processed/`
 - `data/logs/`
 - `reports/rysxai/`
 - `reports/retrieval_smoke*.json`
+
+永远不上传公开远程：
+
 - `gaokao_test_*.sql`
 - 本地数据库 dump
 - 本地 `.env`
