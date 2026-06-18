@@ -1,0 +1,41 @@
+{
+  "major_count": 2053,
+  "detail_row_count": 9428,
+  "tier_school_counts": {
+    "3": 2032,
+    "2": 770,
+    "1": 201
+  },
+  "label_counts": {
+    "否": 920,
+    "是": 263,
+    "弱相关": 470,
+    "相关": 400
+  },
+  "confidence_counts": {
+    "low": 1112,
+    "high": 263,
+    "medium": 678
+  },
+  "direction_counts": {
+    "artificial_intelligence": 520,
+    "digital_economy": 496,
+    "advanced_manufacturing": 269,
+    "green_low_carbon": 177,
+    "bio_manufacturing": 158,
+    "commercial_space": 148,
+    "low_altitude_economy": 114,
+    "new_materials": 110,
+    "integrated_circuit": 68,
+    "future_industries": 31,
+    "quantum_technology": 24
+  },
+  "major_with_tier_sample_counts": {
+    "1": 373,
+    "2": 595,
+    "3": 698
+  },
+  "remote_major_csv": "reports\\remote_db_current_majors\\remote_edu_major_majors_20260614.csv",
+  "remote_tier_csv": "reports\\remote_db_university_tiers\\remote_edu_university_three_tiers_20260614.csv",
+  "policy_mentions_csv": "data\\processed\\policy_evidence\\policy_mentions_policy_evidence_seed_20260612_v5.csv"
+}

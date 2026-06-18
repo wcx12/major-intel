@@ -1,0 +1,60 @@
+﻿{
+    "generated_at":  "2026-06-18T14:37:27+08:00",
+    "release_tag":  "data-assets-2026-06-18",
+    "source_repo":  "wcx12/major-intel",
+    "source_worktree":  "C:\\Users\\10627\\Desktop\\major-intel",
+    "git_branch":  "codex/data-assets-release-20260618",
+    "exclusions":  [
+                       "MySQL dumps / gaokao_test_*.sql",
+                       "secret env files / .env*",
+                       "reports/volunteer_matching",
+                       "external/.agents/.aris/.claude local tooling",
+                       "node_modules and package-manager dependency caches",
+                       "unmasked graduate master_records_clean.csv",
+                       "data/cleaned/graduate_outcomes"
+                   ],
+    "assets":  [
+                   {
+                       "file_name":  "major-intel-generated-outputs-2026-06-18.zip",
+                       "bytes":  1907786,
+                       "size_mb":  1.82,
+                       "sha256":  "0729d2bc589c9a7c17f59ed5d4ae33521545d5ccbad3ba18c32d2d966780aa73",
+                       "entry_count":  7
+                   },
+                   {
+                       "file_name":  "major-intel-processed-graduate-derived-indexes-2026-06-18.zip",
+                       "bytes":  2619184,
+                       "size_mb":  2.5,
+                       "sha256":  "9fffaaab8be57748b8a576c14fa590ce85090ce7fba85a011ad54a5b302e2a05",
+                       "entry_count":  82
+                   },
+                   {
+                       "file_name":  "major-intel-processed-policy-risk-ai-2026-06-18.zip",
+                       "bytes":  51994025,
+                       "size_mb":  49.59,
+                       "sha256":  "10363c3fc13fbaaaad8fee53827d411b826428f4b22d1082e487a68d8f46abc0",
+                       "entry_count":  159
+                   },
+                   {
+                       "file_name":  "major-intel-processed-rysxai-derived-2026-06-18.zip",
+                       "bytes":  36359374,
+                       "size_mb":  34.68,
+                       "sha256":  "8e85acb1d85e1beaec31e27c2e021d5912f749821e17208936c99d4d295edba4",
+                       "entry_count":  21
+                   },
+                   {
+                       "file_name":  "major-intel-processed-vocational-register-2026-06-18.zip",
+                       "bytes":  118671768,
+                       "size_mb":  113.17,
+                       "sha256":  "4ae99ce1035cabaee8149cce3b26e47ddf12336a9a508e0044816b69973116a3",
+                       "entry_count":  66
+                   },
+                   {
+                       "file_name":  "major-intel-raw-policy-risk-catalog-2026-06-18.zip",
+                       "bytes":  492018128,
+                       "size_mb":  469.23,
+                       "sha256":  "59704dce827bb5fa56c0fb497f7ae476e6e95583a25e1508b0d41192dbf93a31",
+                       "entry_count":  19529
+                   }
+               ]
+}
