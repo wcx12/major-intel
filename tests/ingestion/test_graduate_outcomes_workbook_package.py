@@ -15,6 +15,12 @@ ROOT = Path(__file__).resolve().parents[2]
 CLEAN_DIR = ROOT / "data" / "cleaned" / "graduate_outcomes"
 OUTPUT_DIR = ROOT / "outputs" / "graduate_outcomes"
 WORKBOOK = ROOT / "outputs" / "graduate_outcomes" / "graduate_outcomes_clean_data_package.xlsx"
+GRADUATE_OUTCOME_PACKAGE_AVAILABLE = (
+    WORKBOOK.exists()
+    and (ROOT / "outputs" / "graduate_outcomes" / "build_workbook_streaming.py").exists()
+    and (CLEAN_DIR / "master_records_clean.csv").exists()
+    and (CLEAN_DIR / "official_recommendation_school_coverage.csv").exists()
+)
 
 
 def load_streaming_workbook_builder():
@@ -31,6 +37,10 @@ def worksheet_data_row_count(workbook, sheet_name: str) -> int:
     return max(sum(1 for _ in workbook[sheet_name].iter_rows(values_only=True)) - 1, 0)
 
 
+@unittest.skipUnless(
+    GRADUATE_OUTCOME_PACKAGE_AVAILABLE,
+    "local graduate outcome package assets are stored outside Git and must be restored before this package test runs",
+)
 class GraduateOutcomeWorkbookPackageTest(unittest.TestCase):
     def test_add_worksheet_dimensions_retries_transient_replace_lock(self) -> None:
         builder = load_streaming_workbook_builder()

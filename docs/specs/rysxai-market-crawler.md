@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This crawler collects three source-level C datasets from rysxai public JSON APIs:
+The market crawler collects three source-level C datasets from rysxai public JSON APIs:
 
 1. major-level macro employment observations
 2. recruiting job posting samples
@@ -13,6 +13,40 @@ These records are market observations only. They must not be presented as offici
 Implementation lives in `src/major_intel/crawlers/rysxai_market_crawler.py`.
 `scripts/rysxai_market_crawler.py` remains as the compatibility CLI wrapper,
 and `scripts/crawlers/rysxai_market_crawler.py` is the structured CLI path.
+
+For major-introduction-only crawling, use
+`src/major_intel/crawlers/rysxai_major_intro_crawler.py`. It calls only
+`profession/info/?id=...` and extracts:
+
+- `major_detail`: 专业详情
+- `major_course`: 专业课程
+- `undergraduate_to_graduate`: 本研衔接
+- `similar_majors`: 相似专业
+
+Example:
+
+```bash
+python scripts/rysxai_major_intro_crawler.py \
+  --refresh-profession-list data/seeds/rysxai_professions.full.csv \
+  --all-professions \
+  --resume \
+  --sleep-seconds 0.1 \
+  --concurrency 8 \
+  --progress
+```
+
+It writes per-major snapshots to:
+
+```text
+data/processed/rysxai_major_intros/profession_{id}_major_intro_snapshot.json
+```
+
+and aggregate JSONL/CSV files to:
+
+```text
+data/processed/rysxai_major_intros/major_introductions_{run_id}.jsonl
+data/processed/rysxai_major_intros/major_introductions_{run_id}.csv
+```
 
 ## Inputs
 

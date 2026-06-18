@@ -1,0 +1,114 @@
+# Undergraduate Major Official Events Dataset
+
+This support dataset cleans the Ministry of Education undergraduate catalog and
+annual filing/approval candidate crawl, then links the official events back to
+the major-risk warning dataset.
+
+## Source
+
+The source crawl is `emerging_major_seed_20260612_v5`. It uses Ministry of
+Education undergraduate catalog and annual filing/approval result notices and
+attachments. The source crawl manifest is:
+
+`data/logs/policy_documents/emerging_major_seed_20260612_v5_manifest.json`
+
+The latest source crawl contains 16 official pages, 22 attachments, 33,981
+candidate rows, and 0 fetch failures.
+
+## Files
+
+| File | Rows | Purpose |
+|---|---:|---|
+| `data/processed/policy_documents/emerging_major_candidates_emerging_major_seed_20260612_v5.csv` | 33,981 | Raw normalized candidate extraction from official sources. |
+| `data/processed/policy_documents/undergraduate_major_official_events_20260612_v5.csv` | 33,173 | Clean event table with valid undergraduate major codes and risk/policy links. |
+| `data/processed/policy_documents/undergraduate_major_official_event_summary_20260612_v5.csv` | 1,081 | Major-code/name summary with event counts, school coverage, and risk/policy links. |
+| `data/processed/policy_documents/undergraduate_major_official_events_rejected_20260612_v5.csv` | 808 | Rejected table-header / non-standard-code rows retained for audit. |
+| `data/processed/policy_documents/undergraduate_major_official_events_manifest_20260612_v5.json` | 1 | Build manifest and validation counts. |
+| `reports/policy_documents/undergraduate_major_official_events_20260612_v5.md` | 1 | Human-readable risk-link and quality report. |
+| `reports/policy_documents/emerging_major_coverage_emerging_major_seed_20260612_v5.md` | 1 | Source-crawl coverage report. |
+
+## Coverage
+
+| Year | Clean events |
+|---|---:|
+| 2012 | 1,156 |
+| 2013 | 1,900 |
+| 2014 | 1,773 |
+| 2015 | 2,368 |
+| 2016 | 2,362 |
+| 2017 | 2,602 |
+| 2018 | 2,523 |
+| 2019 | 2,948 |
+| 2020 | 2,870 |
+| 2021 | 2,843 |
+| 2022 | 3,591 |
+| 2023 | 2,528 |
+| 2024 | 2,834 |
+| 2026 | 875 |
+
+Event types:
+
+- `undergraduate_catalog_entry`: 5,197 rows.
+- `undergraduate_filing_or_approval_added`: 27,976 rows.
+
+## Event Fields
+
+| Field | Meaning |
+|---|---|
+| `event_record_id` | Unique event row ID. Duplicate source candidate IDs receive `:001`, `:002`, etc. |
+| `source_candidate_id` | Original candidate ID from the source crawl. |
+| `major_code` | Undergraduate major code, validated as six digits plus optional one/two uppercase suffix letters. |
+| `major_name` | Clean major name. OCR rows where school and major were joined are split using catalog-standard names. |
+| `major_level` | Always `本科` in the clean table. |
+| `normalized_event_type` | `undergraduate_catalog_entry` or `undergraduate_filing_or_approval_added`. |
+| `source_event_type` | Original source event type from the candidate crawl. |
+| `event_year` | Source event year retained from the crawl. |
+| `school_name` | School name when the event is school-level and the source text exposes a reliable name. |
+| `is_school_level_event` | `true` when `school_name` is present. |
+| `discipline_category` | Discipline category when parsed from the source. |
+| `major_class` | Major class when parsed from the source. |
+| `degree` | Degree category when parsed from the source. |
+| `study_years` | Study duration when parsed from the source. |
+| `candidate_status` | Source-crawl status, usually `catalog_confirmed`. |
+| `source_title` | Official source title. |
+| `source_url` | Official source page URL. |
+| `attachment_url` | Official attachment URL when applicable. |
+| `source_level` | Source quality label. `A` means official Ministry source. |
+| `evidence_text` | Short parsed evidence row text. |
+| `raw_path` | Local raw attachment/page path used for parsing. |
+| `parsed_from` | Parser/source format such as `doc`, `docx`, `pdf`, `pdf_ocr`, or `xls`. |
+| `warnings_json` | Source-crawl parse warnings. |
+| `employment_warning_*` | Linked undergraduate red/yellow/green employment-warning counts, labels, years, and match basis. |
+| `official_policy_*` | Linked official undergraduate policy warning/control counts, types, years, and match basis. |
+
+## Validation Snapshot
+
+- Source candidate rows: 33,981
+- Clean official event rows: 33,173
+- Rejected rows: 808
+- Duplicate output `event_record_id`: 0
+- Source duplicate candidate-ID excess rows: 32
+- Major names normalized from catalog evidence: 19
+- Filing/approval rows with no reliable school name after OCR parsing: 109
+- Major-code/name pairs: 1,081
+- Major-code/name pairs linked to red/yellow undergraduate employment warnings: 67
+- Major-code/name pairs linked to official undergraduate policy records: 627
+
+## Build
+
+```powershell
+python scripts/ingestion/build_undergraduate_major_official_events.py
+```
+
+The upstream source crawl is generated by the policy document / emerging-major
+crawler. The current workspace already contains the v5 source crawl outputs and
+raw attachments.
+
+## Packages
+
+| Package | Purpose |
+|---|---|
+| `outputs/undergraduate_major_official_events_dataset_20260612.zip` | Clean event files, source candidate CSV, reports, docs, and scripts. |
+| `outputs/undergraduate_major_official_events_raw_sources_20260612.zip` | Raw Ministry pages/attachments and crawl logs for the source crawl. |
+| `outputs/major_risk_warnings_full_dataset_20260612.zip` | Combined package with the core major-risk warning dataset, high-vocational register support dataset, and this undergraduate official-event dataset. |
+| `outputs/major_risk_warnings_package_manifest_20260612.json` | Package sizes, SHA-256 checksums, zip entry counts, and zip validation status. |
